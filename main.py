@@ -3,6 +3,7 @@ from __future__ import annotations
 from config import AppState, EXIT_KEYS, KEY_ACTIONS
 from gesture_mapper import GestureMapper
 from media_controller import MediaController
+from story_engine import StoryEngine
 from state_manager import StateManager
 from vision import VisionSystem
 
@@ -13,6 +14,7 @@ class VanCocoApp:
         self._media_controller = MediaController()
         self._vision_system = VisionSystem()
         self._gesture_mapper = GestureMapper()
+        self._story_engine = StoryEngine()
 
     def run(self) -> None:
         try:
@@ -39,7 +41,9 @@ class VanCocoApp:
             self._media_controller.show_black_screen()
 
     def _handle_idle_state(self, key_code: int) -> None:
-        gesture_result = self._read_trigger_source(key_code)
+        gesture_result = self._story_engine.consume_trigger(
+            self._read_trigger_source(key_code)
+        )
         if gesture_result is None:
             return
 
@@ -57,6 +61,7 @@ class VanCocoApp:
             return
 
         self._media_controller.stop_video()
+        self._story_engine.complete_active_step()
         self._state_manager.finish_playback()
 
     def _read_trigger_source(self, key_code: int):
