@@ -1,16 +1,35 @@
 from __future__ import annotations
 
+import os
 import platform
 import sys
 from pathlib import Path
 from typing import Optional
 
+import PySide6
 import vlc
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication, QWidget
 
 from config import WINDOW_NAME
+
+
+QT_ROOT = Path(PySide6.__file__).resolve().parent / "Qt"
+QT_PLUGINS_DIR = QT_ROOT / "plugins"
+QT_PLATFORMS_DIR = QT_PLUGINS_DIR / "platforms"
+QT_LIB_DIR = QT_ROOT / "lib"
+
+os.environ.setdefault("QT_PLUGIN_PATH", str(QT_PLUGINS_DIR))
+os.environ.setdefault("QT_QPA_PLATFORM_PLUGIN_PATH", str(QT_PLATFORMS_DIR))
+if platform.system() == "Darwin":
+    os.environ.setdefault("QT_QPA_PLATFORM", "cocoa")
+    os.environ["DYLD_FRAMEWORK_PATH"] = (
+        f"{QT_LIB_DIR}:{os.environ.get('DYLD_FRAMEWORK_PATH', '')}".rstrip(":")
+    )
+    os.environ["DYLD_LIBRARY_PATH"] = (
+        f"{QT_LIB_DIR}:{os.environ.get('DYLD_LIBRARY_PATH', '')}".rstrip(":")
+    )
 
 
 class PresentationWindow(QWidget):
