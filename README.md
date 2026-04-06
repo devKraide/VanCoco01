@@ -1,43 +1,60 @@
 # VanCoco
 
-Aplicacao interativa minima em Python para o fluxo:
+Aplicacao interativa em Python para apresentacao teatral com:
+- visao computacional via camera
+- tela principal fullscreen preta
+- videos com audio embutidos
+- integracao serial com `CocoMag` e `CocoVision`
 
-`tela preta -> gesto -> video -> tela preta`
+Fluxo atual do projeto:
+- `HAND_OPEN` -> `video1`
+- `POINT` -> `video2`
+- envia `COCOMAG:PRESENT` e `COCOVISION:PRESENT`
+- espera `COCOMAG_DONE` e `COCOVISION_DONE`
+- toca `video3`
+- espera `V_SIGN`
+- envia `COCOMAG:ACTION`
+- espera `COCOMAG_DONE`
+- toca `video4`
+- espera `THUMB_UP`
+- toca `video5`
+- envia `COCOVISION:ACTION`
+- espera `COCOVISION_DONE`
+- entra em leitura continua de cores
+- `COLOR_RED` -> `video6_red`
+- `COLOR_GREEN` -> `video6_green`
+- `COLOR_BLUE` -> `video6_blue`
 
-Escopo atual:
-- camera ativa em background
-- deteccao de gestos simples com MediaPipe Hands
-- reproducao de video com audio embutido na janela principal
-- retorno automatico para tela preta ao fim do video
-- atalhos de teclado para teste
+Na fase de cor:
+- o sistema pausa novas leituras enquanto o video da cor estiver rodando
+- ao terminar o video, volta automaticamente para `WAITING_COLOR`
+- a mesma cor nao dispara novamente
+- cada video de cor toca uma unica vez por execucao
 
 ## Requisitos
 
-Ambiente recomendado no Linux Mint:
+Ambiente recomendado:
 - Linux Mint atual
 - Python 3.11
 - `python3.11-venv`
 - VLC instalado no sistema
 
-Dependencias Python usadas pelo projeto:
-- `opencv-python`
+Dependencias Python:
+- `numpy==1.26.4`
+- `opencv-python==4.10.0.84`
 - `mediapipe==0.10.9`
-- `PySide6`
-- `python-vlc`
-- `numpy`
+- `PySide6==6.7.2`
+- `python-vlc==3.0.21203`
+- `pyserial==3.5`
 
 ## Instalar no Linux Mint
 
-### 1. Instalar dependencias de sistema
+### 1. Dependencias de sistema
 
 ```bash
 sudo apt update
 sudo apt install -y python3.11 python3.11-venv python3-pip vlc libxcb-cursor0
 ```
-
-Observacao:
-- `vlc` e necessario para o backend de video/audio
-- `libxcb-cursor0` costuma ser util para evitar problemas de plugins Qt em algumas instalacoes Linux
 
 ### 2. Clonar o projeto
 
@@ -46,7 +63,7 @@ git clone <URL_DO_REPOSITORIO>
 cd vanCoco
 ```
 
-### 3. Criar e ativar ambiente virtual
+### 3. Criar ambiente virtual
 
 ```bash
 python3.11 -m venv .venv
@@ -56,91 +73,151 @@ source .venv/bin/activate
 ### 4. Instalar dependencias Python
 
 ```bash
-python -m pip install --upgrade pip
-python -m pip install opencv-python mediapipe==0.10.9 PySide6 python-vlc numpy
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -r requirements.txt
+```
+
+## Midia esperada
+
+Coloque os arquivos em `midia/` com estes nomes exatos:
+- `video1.mp4`
+- `video2.mp4`
+- `video3.mp4`
+- `video4.mp4`
+- `video5.mp4`
+- `video6_red.mp4`
+- `video6_green.mp4`
+- `video6_blue.mp4`
+
+Se algum video nao existir, algumas fases usam mock curto para manter o fluxo, mas o ideal e ter todos os arquivos reais.
+
+## Portas seriais
+
+Com os dois robos conectados:
+
+```bash
+ls /dev/cu.*
+```
+
+Defina as portas antes de rodar:
+
+```bash
+export COCOMAG_SERIAL_PORT=/dev/cu.usbserial-XXXX
+export COCOVISION_SERIAL_PORT=/dev/cu.usbserial-YYYY
 ```
 
 ## Como rodar
 
-Com o ambiente virtual ativado:
+```bash
+source .venv/bin/activate
+python main.py
+```
+
+Ou em uma linha:
 
 ```bash
-python main.py
+export COCOMAG_SERIAL_PORT=/dev/cu.usbserial-XXXX
+export COCOVISION_SERIAL_PORT=/dev/cu.usbserial-YYYY
+source .venv/bin/activate && python main.py
 ```
 
 ## Controles
 
-- `1` reproduz `midia/video1.mp4`
-- `2` reproduz `midia/video2.mp4`
-- `q` sai da aplicacao
-- `Esc` sai da aplicacao
+- `1` toca `video1`
+- `2` toca `video2`
+- `q` sai
+- `Esc` sai
 
-## Estrutura atual
+## Gestos usados
 
-- `main.py`: loop principal da aplicacao
-- `vision.py`: camera e deteccao de gestos
-- `gesture_mapper.py`: mapeamento gesto -> acao
-- `media_controller.py`: janela principal fullscreen e player embutido
-- `state_manager.py`: estados e bloqueios de reproducao
-- `config.py`: configuracoes e mapeamentos
+- `HAND_OPEN`
+- `POINT`
+- `V_SIGN`
+- `THUMB_UP`
+
+## Hardware atual
+
+### CocoMag
+- ESP32
+- L298N
+- 2 motores
+- servo `SG90` no `D13`
+- comunicacao via USB Serial
+
+### CocoVision
+- ESP32
+- L298N
+- sensor `TCS34725`
+- I2C configurado explicitamente em:
+  - `SDA = GPIO 21`
+  - `SCL = GPIO 22`
+- comunicacao via USB Serial
+
+## Estrutura principal
+
+- `main.py`: loop principal
+- `vision.py`: camera e classificacao de gestos
+- `gesture_mapper.py`: conversao gesto -> acao
+- `media_controller.py`: janela fullscreen e player embutido
+- `state_manager.py`: estados operacionais do app
+- `story_engine.py`: regras narrativas e transicoes
+- `robot_comm.py`: serial do `CocoMag` e `CocoVision`
+- `firmware/cocomag/cocomag.ino`: firmware do `CocoMag`
+- `firmware/cocovision/cocovision.ino`: firmware do `CocoVision`
 
 ## Observacoes importantes
 
-- O projeto usa OpenCV apenas para visao computacional.
+- OpenCV fica restrito a visao computacional.
 - A camada de apresentacao usa `PySide6`.
-- A reproducao de video usa `python-vlc` embutido na janela principal.
-- Cada video toca apenas uma vez por execucao da aplicacao.
-- Durante a reproducao, novos gestos ficam bloqueados.
+- O video com audio roda via `python-vlc`.
+- Durante video ou acao de robo, o sistema bloqueia novos inputs indevidos.
+- A fase de cor permanece ouvindo `COLOR_*` ate consumir uma cor nova valida.
 
 ## Solucao de problemas
 
-### MediaPipe com erro de API
-
-Se aparecer erro relacionado a `mediapipe.solutions`, reinstale a versao compativel:
+### MediaPipe
 
 ```bash
 python -m pip uninstall -y mediapipe
 python -m pip install mediapipe==0.10.9
 ```
 
-### VLC nao encontrado
-
-Verifique se o VLC esta instalado:
-
-```bash
-vlc --version
-```
-
-Se nao estiver:
-
-```bash
-sudo apt install -y vlc
-```
-
-### Erro de plugin Qt no Linux
-
-Se houver erro visual ou de inicializacao do Qt, tente:
+### Qt / plugin no Linux
 
 ```bash
 sudo apt install -y libxcb-cursor0
 ```
 
-## Publicacao no GitHub
+### VLC
+
+```bash
+vlc --version
+```
+
+Se precisar:
+
+```bash
+sudo apt install -y vlc
+```
+
+### Porta serial ocupada
+
+Se aparecer `Resource busy`, feche:
+- Serial Monitor da Arduino IDE
+- qualquer terminal com `screen`, `minicom` ou monitor serial
+
+## GitHub
 
 Antes de subir:
-- confirme que a pasta `midia/` esta com os arquivos esperados
-- confirme que o `.venv/` nao esta versionado
-- inclua este `README.md`
+- nao versione `.venv/`
+- nao versione `__pycache__/`
+- confirme os videos em `midia/`
+- mantenha este `README.md` atualizado junto com o fluxo real
 
-Sugestao de `.gitignore` minima:
+Sugestao minima de `.gitignore`:
 
 ```gitignore
 .venv/
 __pycache__/
 *.pyc
 ```
-
-## Manutencao do README
-
-Este README foi escrito para refletir o estado atual do projeto no branch atual.
-Quando mudarmos dependencias, backend de video ou fluxo de execucao, o ideal e atualizar este arquivo no mesmo commit da mudanca.
