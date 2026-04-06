@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from config import AppState, EXIT_KEYS, KEY_ACTIONS
+from config import AppState, EXIT_KEYS, GestureName, KEY_ACTIONS
 from gesture_mapper import GestureMapper
 from media_controller import MediaController
 from robot_comm import RobotComm
@@ -37,14 +37,41 @@ class VanCocoApp:
                     self._handle_playing_state()
                     continue
 
-                self._handle_waiting_robots_state()
+                if self._state_manager.state is AppState.WAITING_PRESENTATION:
+                    self._handle_waiting_presentation_state()
+                    continue
+
+                if self._state_manager.state is AppState.WAITING_COCOMAG_ACTION:
+                    self._handle_waiting_cocomag_action_state(key_code)
+                    continue
+
+                if self._state_manager.state is AppState.WAITING_VIDEO5_TRIGGER:
+                    self._handle_waiting_video5_trigger_state(key_code)
+                    continue
+
+                if self._state_manager.state is AppState.WAITING_COCOVISION_ACTION_COMPLETION:
+                    self._handle_waiting_cocovision_action_completion_state()
+                    continue
+
+                if self._state_manager.state is AppState.WAITING_COLOR:
+                    self._handle_waiting_color_state()
+                    continue
+
+                self._handle_waiting_cocomag_action_completion_state()
         finally:
             self._robot_comm.close()
             self._media_controller.close()
             self._vision_system.release()
 
     def _render_current_state(self) -> None:
-        if self._state_manager.state is AppState.IDLE_BLACK_SCREEN:
+        if self._state_manager.state in {
+            AppState.IDLE_BLACK_SCREEN,
+            AppState.WAITING_COCOMAG_ACTION,
+            AppState.WAITING_COCOMAG_ACTION_COMPLETION,
+            AppState.WAITING_VIDEO5_TRIGGER,
+            AppState.WAITING_COCOVISION_ACTION_COMPLETION,
+            AppState.WAITING_COLOR,
+        }:
             self._media_controller.show_black_screen()
 
     def _handle_idle_state(self, key_code: int) -> None:
@@ -52,6 +79,9 @@ class VanCocoApp:
             self._read_trigger_source(key_code)
         )
         if gesture_result is None:
+            return
+
+        if gesture_result.action is None:
             return
 
         playback_started = self._state_manager.request_playback(
@@ -68,21 +98,115 @@ class VanCocoApp:
             return
 
         self._media_controller.stop_video()
+        if self._story_engine.consume_color_video_finished():
+            self._robot_comm.clear_color_events()
+            self._robot_comm.set_color_events_enabled(True)
+            self._state_manager.enter_waiting_color()
+            return
+
         transition = self._story_engine.complete_active_step()
+        if self._story_engine.is_waiting_cocovision_action_completion():
+            for robot_name, command in transition.robot_commands:
+                self._robot_comm.send_command(robot_name, command)
+            self._state_manager.enter_waiting_cocovision_action_completion()
+            return
+
         if transition.robot_commands:
             for robot_name, command in transition.robot_commands:
                 self._robot_comm.send_command(robot_name, command)
-            self._state_manager.enter_waiting_robots_presentation()
+            self._state_manager.enter_waiting_presentation()
+            return
+
+        if self._story_engine.is_waiting_cocomag_action():
+            self._state_manager.enter_waiting_cocomag_action()
+            return
+
+        if self._story_engine.is_waiting_video5_trigger():
+            self._state_manager.enter_waiting_video5_trigger()
+            return
+
+        if self._story_engine.is_waiting_color():
+            self._state_manager.enter_waiting_color()
             return
 
         self._state_manager.finish_playback()
 
-    def _handle_waiting_robots_state(self) -> None:
+    def _handle_waiting_presentation_state(self) -> None:
         for event in self._robot_comm.poll_events():
             transition = self._story_engine.consume_robot_event(event)
             if transition.video_path is None:
                 continue
 
+            self._state_manager.start_system_playback(transition.video_path)
+            if transition.video_path.exists():
+                self._media_controller.start_video(transition.video_path)
+                return
+
+            self._media_controller.start_mock_video(transition.mock_video_duration)
+            return
+
+    def _handle_waiting_cocomag_action_state(self, key_code: int) -> None:
+        gesture_result = self._story_engine.consume_trigger(
+            self._read_trigger_source(key_code)
+        )
+        if gesture_result is None or gesture_result.gesture is not GestureName.V_SIGN:
+            return
+
+        transition = self._story_engine.complete_active_step()
+        for robot_name, command in transition.robot_commands:
+            self._robot_comm.send_command(robot_name, command)
+        self._state_manager.enter_waiting_cocomag_action_completion()
+
+    def _handle_waiting_cocomag_action_completion_state(self) -> None:
+        for event in self._robot_comm.poll_events():
+            transition = self._story_engine.consume_cocomag_action_result(event)
+            if transition.video_path is None:
+                continue
+
+            self._state_manager.start_system_playback(transition.video_path)
+            if transition.video_path.exists():
+                self._media_controller.start_video(transition.video_path)
+                return
+
+            self._media_controller.start_mock_video(transition.mock_video_duration)
+            return
+
+    def _handle_waiting_video5_trigger_state(self, key_code: int) -> None:
+        gesture_result = self._story_engine.consume_trigger(
+            self._read_trigger_source(key_code)
+        )
+        if gesture_result is None or gesture_result.gesture is not GestureName.THUMB_UP:
+            return
+
+        if gesture_result.action is None:
+            return
+
+        self._state_manager.start_system_playback(gesture_result.action.video_path)
+        if gesture_result.action.video_path.exists():
+            self._media_controller.start_video(gesture_result.action.video_path)
+            return
+
+        self._media_controller.start_mock_video(2.0)
+
+    def _handle_waiting_cocovision_action_completion_state(self) -> None:
+        for event in self._robot_comm.poll_events():
+            transition = self._story_engine.consume_cocovision_action_result(event)
+            if not self._story_engine.is_waiting_color():
+                continue
+
+            self._robot_comm.clear_color_events()
+            self._robot_comm.set_color_events_enabled(True)
+            self._state_manager.enter_waiting_color()
+            return
+
+    def _handle_waiting_color_state(self) -> None:
+        for event in self._robot_comm.poll_events():
+            transition = self._story_engine.consume_color_event(event)
+            if transition.video_path is None:
+                continue
+
+            self._robot_comm.set_color_events_enabled(False)
+            self._robot_comm.clear_color_events()
             self._state_manager.start_system_playback(transition.video_path)
             if transition.video_path.exists():
                 self._media_controller.start_video(transition.video_path)

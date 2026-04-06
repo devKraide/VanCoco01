@@ -33,6 +33,7 @@ def _resolve_hands_api():
 @dataclass(frozen=True)
 class FingerState:
     thumb_open: bool
+    thumb_up: bool
     index_open: bool
     middle_open: bool
     ring_open: bool
@@ -45,6 +46,12 @@ class GestureClassifier:
 
         if self._is_hand_open(finger_state):
             return GestureName.HAND_OPEN
+
+        if self._is_v_sign(finger_state):
+            return GestureName.V_SIGN
+
+        if self._is_thumb_up(finger_state):
+            return GestureName.THUMB_UP
 
         if self._is_point(finger_state):
             return GestureName.POINT
@@ -61,6 +68,9 @@ class GestureClassifier:
         wrist_x, _ = to_pixel(0)
         thumb_tip_x, _ = to_pixel(4)
         thumb_ip_x, _ = to_pixel(3)
+        thumb_tip_y = to_pixel(4)[1]
+        thumb_ip_y = to_pixel(3)[1]
+        index_mcp_y = to_pixel(5)[1]
 
         index_tip_y = to_pixel(8)[1]
         index_pip_y = to_pixel(6)[1]
@@ -74,6 +84,7 @@ class GestureClassifier:
         thumb_open = self._is_thumb_extended(thumb_tip_x, thumb_ip_x, wrist_x)
         return FingerState(
             thumb_open=thumb_open,
+            thumb_up=thumb_tip_y < thumb_ip_y and thumb_tip_y < index_mcp_y,
             index_open=index_tip_y < index_pip_y,
             middle_open=middle_tip_y < middle_pip_y,
             ring_open=ring_tip_y < ring_pip_y,
@@ -107,6 +118,29 @@ class GestureClassifier:
         return all(
             (
                 finger_state.index_open,
+                not finger_state.middle_open,
+                not finger_state.ring_open,
+                not finger_state.pinky_open,
+            )
+        )
+
+    @staticmethod
+    def _is_v_sign(finger_state: FingerState) -> bool:
+        return all(
+            (
+                finger_state.index_open,
+                finger_state.middle_open,
+                not finger_state.ring_open,
+                not finger_state.pinky_open,
+            )
+        )
+
+    @staticmethod
+    def _is_thumb_up(finger_state: FingerState) -> bool:
+        return all(
+            (
+                finger_state.thumb_up,
+                not finger_state.index_open,
                 not finger_state.middle_open,
                 not finger_state.ring_open,
                 not finger_state.pinky_open,

@@ -57,9 +57,29 @@ class StateManager:
         self._active_request = PlaybackRequest(video_path=video_path)
         self._state = AppState.PLAYING_VIDEO
 
-    def enter_waiting_robots_presentation(self) -> None:
+    def enter_waiting_presentation(self) -> None:
         self._active_request = None
-        self._state = AppState.WAITING_ROBOTS_PRESENTATION
+        self._state = AppState.WAITING_PRESENTATION
+
+    def enter_waiting_cocomag_action(self) -> None:
+        self._active_request = None
+        self._state = AppState.WAITING_COCOMAG_ACTION
+
+    def enter_waiting_cocomag_action_completion(self) -> None:
+        self._active_request = None
+        self._state = AppState.WAITING_COCOMAG_ACTION_COMPLETION
+
+    def enter_waiting_video5_trigger(self) -> None:
+        self._active_request = None
+        self._state = AppState.WAITING_VIDEO5_TRIGGER
+
+    def enter_waiting_cocovision_action_completion(self) -> None:
+        self._active_request = None
+        self._state = AppState.WAITING_COCOVISION_ACTION_COMPLETION
+
+    def enter_waiting_color(self) -> None:
+        self._active_request = None
+        self._state = AppState.WAITING_COLOR
 
     def finish_playback(self) -> None:
         self._active_request = None

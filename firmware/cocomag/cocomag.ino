@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <ESP32Servo.h>
 
 constexpr int ENA = 5;
 constexpr int IN1 = 18;
@@ -6,15 +7,20 @@ constexpr int IN2 = 19;
 constexpr int ENB = 25;
 constexpr int IN3 = 26;
 constexpr int IN4 = 27;
+constexpr int SERVO_PIN = 13;
 
 constexpr int MOTOR_SPEED = 180;
 constexpr unsigned long FORWARD_MS = 900;
 constexpr unsigned long TURN_MS = 700;
 constexpr unsigned long BACKWARD_MS = 800;
 constexpr unsigned long STOP_MS = 250;
+constexpr int SERVO_REST_ANGLE = 0;
+constexpr int SERVO_ACTION_ANGLE = 90;
+constexpr unsigned long SERVO_HOLD_MS = 700;
 
 String serialBuffer;
 bool isPresenting = false;
+Servo actionServo;
 
 void setMotorA(bool forward, int speedValue);
 void setMotorB(bool forward, int speedValue);
@@ -23,6 +29,7 @@ void moveBackward();
 void turnRight();
 void stopMotors();
 void runPresentation();
+void runAction();
 void handleCommand(const String& command);
 
 void setup() {
@@ -36,6 +43,9 @@ void setup() {
   pinMode(IN4, OUTPUT);
 
   stopMotors();
+  actionServo.setPeriodHertz(50);
+  actionServo.attach(SERVO_PIN, 500, 2400);
+  actionServo.write(SERVO_REST_ANGLE);
 }
 
 void loop() {
@@ -69,6 +79,13 @@ void handleCommand(const String& command) {
     isPresenting = true;
     runPresentation();
     isPresenting = false;
+    return;
+  }
+
+  if (normalized == "COCOMAG:ACTION") {
+    isPresenting = true;
+    runAction();
+    isPresenting = false;
   }
 }
 
@@ -89,6 +106,22 @@ void runPresentation() {
   delay(BACKWARD_MS);
 
   stopMotors();
+  delay(STOP_MS);
+
+  Serial.println("COCOMAG_DONE");
+}
+
+void runAction() {
+  moveForward();
+  delay(FORWARD_MS);
+
+  stopMotors();
+  delay(STOP_MS);
+
+  actionServo.write(SERVO_ACTION_ANGLE);
+  delay(SERVO_HOLD_MS);
+
+  actionServo.write(SERVO_REST_ANGLE);
   delay(STOP_MS);
 
   Serial.println("COCOMAG_DONE");

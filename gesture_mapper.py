@@ -9,7 +9,7 @@ from config import GestureName, VIDEO_ACTIONS, VideoAction
 @dataclass(frozen=True)
 class GestureResult:
     gesture: GestureName
-    action: VideoAction
+    action: Optional[VideoAction]
 
 
 class GestureMapper:
@@ -21,7 +21,4 @@ class GestureMapper:
             return None
 
         action = self._action_map.get(gesture)
-        if action is None:
-            return None
-
         return GestureResult(gesture=gesture, action=action)
