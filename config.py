@@ -13,6 +13,7 @@ WINDOW_NAME = "VanCoco"
 class AppState(Enum):
     IDLE_BLACK_SCREEN = "idle_black_screen"
     PLAYING_VIDEO = "playing_video"
+    WAITING_ROBOTS_PRESENTATION = "waiting_robots_presentation"
 
 
 class GestureName(Enum):
@@ -37,6 +38,8 @@ VIDEO_ACTIONS = {
     ),
 }
 
+VIDEO3_PATH = MEDIA_DIR / "video3.mp4"
+
 
 KEY_ACTIONS = {
     ord("1"): GestureName.HAND_OPEN,
@@ -50,3 +53,7 @@ CAMERA_WARMUP_FRAMES = 5
 DETECTION_CONFIDENCE = 0.65
 TRACKING_CONFIDENCE = 0.65
 DEBOUNCE_SECONDS = 1.5
+ROBOT_NAMES = ("COCOMAG", "COCOVISION")
+ROBOT_COMMAND_PRESENT = "PRESENT"
+MOCK_VIDEO_DURATION_SECONDS = 2.0
+COCOMAG_BAUDRATE = 115200

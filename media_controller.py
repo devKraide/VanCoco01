@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import platform
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -80,6 +81,7 @@ class MediaController:
         self._pressed_key: Optional[int] = None
         self._is_running = True
         self._video_finished = False
+        self._mock_video_deadline: Optional[float] = None
         self._vlc_instance = vlc.Instance("--no-video-title-show")
         self._media_player: Optional[vlc.MediaPlayer] = None
         self._window = PresentationWindow(self)
@@ -97,6 +99,7 @@ class MediaController:
             raise FileNotFoundError(f"Nao foi possivel abrir o video: {video_path}")
 
         self._video_finished = False
+        self._mock_video_deadline = None
         media = self._vlc_instance.media_new(str(video_path))
         self._media_player = self._vlc_instance.media_player_new()
         self._media_player.set_media(media)
@@ -105,11 +108,18 @@ class MediaController:
         self._attach_player_events()
         self._media_player.play()
 
+    def start_mock_video(self, duration_seconds: float) -> None:
+        self.stop_video()
+        self._video_finished = False
+        self._mock_video_deadline = time.monotonic() + duration_seconds
+        self._window.video_surface.hide()
+
     def stop_video(self) -> None:
         if self._media_player is not None:
             self._media_player.stop()
             self._media_player.release()
             self._media_player = None
+        self._mock_video_deadline = None
         self.show_black_screen()
 
     def close(self) -> None:
@@ -119,6 +129,9 @@ class MediaController:
 
     def update_ui(self) -> None:
         self._app.processEvents()
+        if self._mock_video_deadline is not None and time.monotonic() >= self._mock_video_deadline:
+            self._mock_video_deadline = None
+            self._video_finished = True
 
     def consume_key(self) -> Optional[int]:
         pressed_key = self._pressed_key

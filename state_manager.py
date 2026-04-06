@@ -10,8 +10,8 @@ from config import AppState, DEBOUNCE_SECONDS, GestureName, VideoAction
 
 @dataclass
 class PlaybackRequest:
-    gesture: GestureName
-    action: VideoAction
+    video_path: Path
+    gesture: Optional[GestureName] = None
 
 
 class StateManager:
@@ -43,12 +43,23 @@ class StateManager:
         if self._is_debounced(gesture):
             return False
 
-        self._active_request = PlaybackRequest(gesture=gesture, action=action)
+        self._active_request = PlaybackRequest(
+            video_path=action.video_path,
+            gesture=gesture,
+        )
         self._state = AppState.PLAYING_VIDEO
         self._last_triggered_gesture = gesture
         self._last_triggered_at = time.monotonic()
         self._played_videos.add(action.video_path)
         return True
+
+    def start_system_playback(self, video_path: Path) -> None:
+        self._active_request = PlaybackRequest(video_path=video_path)
+        self._state = AppState.PLAYING_VIDEO
+
+    def enter_waiting_robots_presentation(self) -> None:
+        self._active_request = None
+        self._state = AppState.WAITING_ROBOTS_PRESENTATION
 
     def finish_playback(self) -> None:
         self._active_request = None
