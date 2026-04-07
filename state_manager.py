@@ -93,6 +93,10 @@ class StateManager:
         self._active_request = None
         self._state = AppState.WAITING_VIDEO8_TRIGGER
 
+    def enter_waiting_video9_trigger(self) -> None:
+        self._active_request = None
+        self._state = AppState.WAITING_VIDEO9_TRIGGER
+
     def finish_playback(self) -> None:
         self._active_request = None
         self._state = AppState.IDLE_BLACK_SCREEN

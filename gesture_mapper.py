@@ -18,6 +18,7 @@ class GestureMapper:
         self._last_seen_gesture: Optional[GestureName] = None
         self._stable_frames = 0
         self._latched_gesture: Optional[GestureName] = None
+        self._last_debug_message = ""
 
     def map_gesture(self, gesture: Optional[GestureName]) -> Optional[GestureResult]:
         if gesture is None:
@@ -42,4 +43,13 @@ class GestureMapper:
 
         self._latched_gesture = gesture
         action = self._action_map.get(gesture)
+        self._debug_emit(gesture, action is not None)
         return GestureResult(gesture=gesture, action=action)
+
+    def _debug_emit(self, gesture: GestureName, has_action: bool) -> None:
+        message = f"[GestureMapper] accepted={gesture.value} action={'YES' if has_action else 'NO'}"
+        if message == self._last_debug_message:
+            return
+
+        self._last_debug_message = message
+        print(message)

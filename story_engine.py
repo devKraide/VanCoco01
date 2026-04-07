@@ -9,6 +9,8 @@ from config import (
     CameraTriggerName,
     COLOR_VIDEO_PATHS,
     ENABLE_DOUBLE_CLOSED_FIST_FOR_VIDEO8,
+    FINAL_OUTCOME,
+    FINAL_VIDEO_PATHS,
     GestureName,
     MOCK_VIDEO_DURATION_SECONDS,
     ROBOT_COMMAND_ACTION,
@@ -39,6 +41,7 @@ class StoryStage(Enum):
     WAITING_VIDEO7_TRIGGER = "waiting_video7_trigger"
     WAITING_COCOVISION_RETURN_COMPLETION = "waiting_cocovision_return_completion"
     WAITING_VIDEO8_TRIGGER = "waiting_video8_trigger"
+    WAITING_VIDEO9_TRIGGER = "waiting_video9_trigger"
     LOCKED_END = "locked_end"
 
 
@@ -77,7 +80,8 @@ class StoryEngine:
         if self._active_step is None:
             return StoryTransition()
 
-        self._stage = self._active_step.next_stage
+        step = self._active_step
+        self._stage = step.next_stage
         self._active_step = None
         if self._stage is StoryStage.WAITING_PRESENTATION:
             self._pending_robots = set(ROBOT_NAMES)
@@ -100,6 +104,12 @@ class StoryEngine:
         if self._stage is StoryStage.WAITING_COCOVISION_RETURN_COMPLETION:
             return StoryTransition(
                 robot_commands=(("COCOVISION", ROBOT_COMMAND_RETURN),),
+            )
+
+        if step.expected_gesture is GestureName.PRAYER_HANDS:
+            return StoryTransition(
+                video_path=FINAL_VIDEO_PATHS.get(FINAL_OUTCOME, FINAL_VIDEO_PATHS["success"]),
+                mock_video_duration=MOCK_VIDEO_DURATION_SECONDS,
             )
 
         return StoryTransition()
@@ -162,7 +172,7 @@ class StoryEngine:
             return StoryTransition()
 
         if trigger_name is CameraTriggerName.MAGNIFIER_MARKER_DETECTED:
-            self._stage = StoryStage.LOCKED_END
+            self._stage = StoryStage.WAITING_VIDEO9_TRIGGER
             return StoryTransition(
                 video_path=VIDEO8_PATH,
                 mock_video_duration=MOCK_VIDEO_DURATION_SECONDS,
@@ -172,7 +182,7 @@ class StoryEngine:
             ENABLE_DOUBLE_CLOSED_FIST_FOR_VIDEO8
             and trigger_name is CameraTriggerName.DOUBLE_CLOSED_FIST_DETECTED
         ):
-            self._stage = StoryStage.LOCKED_END
+            self._stage = StoryStage.WAITING_VIDEO9_TRIGGER
             return StoryTransition(
                 video_path=VIDEO8_PATH,
                 mock_video_duration=MOCK_VIDEO_DURATION_SECONDS,
@@ -230,6 +240,9 @@ class StoryEngine:
     def is_waiting_video8_trigger(self) -> bool:
         return self._stage is StoryStage.WAITING_VIDEO8_TRIGGER
 
+    def is_waiting_video9_trigger(self) -> bool:
+        return self._stage is StoryStage.WAITING_VIDEO9_TRIGGER
+
     def _build_current_step(self) -> Optional[StoryStep]:
         if self._stage is StoryStage.WAIT_HAND_OPEN:
             return StoryStep(
@@ -259,6 +272,12 @@ class StoryEngine:
             return StoryStep(
                 expected_gesture=GestureName.CLOSED_FIST,
                 next_stage=StoryStage.WAITING_COCOVISION_RETURN_COMPLETION,
+            )
+
+        if self._stage is StoryStage.WAITING_VIDEO9_TRIGGER:
+            return StoryStep(
+                expected_gesture=GestureName.PRAYER_HANDS,
+                next_stage=StoryStage.LOCKED_END,
             )
 
         return None

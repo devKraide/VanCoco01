@@ -32,7 +32,11 @@ class VanCocoApp:
                 self._media_controller.update_ui()
                 self._render_current_state()
                 key_code = self._media_controller.consume_key()
-                vision_inputs = self._vision_system.read_inputs()
+                vision_inputs = self._vision_system.read_inputs(
+                    prioritize_prayer_hands=(
+                        self._state_manager.state is AppState.WAITING_VIDEO9_TRIGGER
+                    )
+                )
 
                 if key_code in EXIT_KEYS:
                     break
@@ -73,6 +77,10 @@ class VanCocoApp:
                     self._handle_waiting_video8_trigger_state(vision_inputs)
                     continue
 
+                if self._state_manager.state is AppState.WAITING_VIDEO9_TRIGGER:
+                    self._handle_waiting_video9_trigger_state(key_code, vision_inputs)
+                    continue
+
                 if self._state_manager.state is AppState.WAITING_COCOVISION_RETURN_COMPLETION:
                     self._handle_waiting_cocovision_return_completion_state()
                     continue
@@ -94,6 +102,7 @@ class VanCocoApp:
             AppState.WAITING_VIDEO7_TRIGGER,
             AppState.WAITING_COCOVISION_RETURN_COMPLETION,
             AppState.WAITING_VIDEO8_TRIGGER,
+            AppState.WAITING_VIDEO9_TRIGGER,
         }:
             self._media_controller.show_black_screen()
 
@@ -161,6 +170,10 @@ class VanCocoApp:
 
         if self._story_engine.is_waiting_video8_trigger():
             self._state_manager.enter_waiting_video8_trigger()
+            return
+
+        if self._story_engine.is_waiting_video9_trigger():
+            self._state_manager.enter_waiting_video9_trigger()
             return
 
         self._state_manager.finish_playback()
@@ -278,6 +291,24 @@ class VanCocoApp:
     def _handle_waiting_video8_trigger_state(self, vision_inputs) -> None:
         trigger_name = self._read_video8_trigger_source(vision_inputs)
         transition = self._story_engine.consume_video8_trigger(trigger_name)
+        if transition.video_path is None:
+            return
+
+        self._state_manager.start_system_playback(transition.video_path)
+        if transition.video_path.exists():
+            self._media_controller.start_video(transition.video_path)
+            return
+
+        self._media_controller.start_mock_video(transition.mock_video_duration)
+
+    def _handle_waiting_video9_trigger_state(self, key_code: int, vision_inputs) -> None:
+        gesture_result = self._story_engine.consume_trigger(
+            self._read_trigger_source(key_code, vision_inputs)
+        )
+        if gesture_result is None or gesture_result.gesture is not GestureName.PRAYER_HANDS:
+            return
+
+        transition = self._story_engine.complete_active_step()
         if transition.video_path is None:
             return
 
