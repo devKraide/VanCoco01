@@ -6,16 +6,21 @@ from pathlib import Path
 from typing import Optional
 
 from config import (
+    CameraTriggerName,
     COLOR_VIDEO_PATHS,
+    ENABLE_DOUBLE_CLOSED_FIST_FOR_VIDEO8,
     GestureName,
     MOCK_VIDEO_DURATION_SECONDS,
     ROBOT_COMMAND_ACTION,
     ROBOT_COMMAND_PRESENT,
+    ROBOT_COMMAND_RETURN,
     ROBOT_COMMAND_SCAN,
     ROBOT_NAMES,
     VIDEO3_PATH,
     VIDEO4_PATH,
     VIDEO5_PATH,
+    VIDEO7_PATH,
+    VIDEO8_PATH,
 )
 from gesture_mapper import GestureResult
 from robot_comm import RobotEvent
@@ -31,6 +36,9 @@ class StoryStage(Enum):
     WAITING_COCOVISION_ACTION_COMPLETION = "waiting_cocovision_action_completion"
     WAITING_COLOR = "waiting_color"
     PLAYING_COLOR_VIDEO = "playing_color_video"
+    WAITING_VIDEO7_TRIGGER = "waiting_video7_trigger"
+    WAITING_COCOVISION_RETURN_COMPLETION = "waiting_cocovision_return_completion"
+    WAITING_VIDEO8_TRIGGER = "waiting_video8_trigger"
     LOCKED_END = "locked_end"
 
 
@@ -89,6 +97,11 @@ class StoryEngine:
                 robot_commands=(("COCOVISION", ROBOT_COMMAND_ACTION),),
             )
 
+        if self._stage is StoryStage.WAITING_COCOVISION_RETURN_COMPLETION:
+            return StoryTransition(
+                robot_commands=(("COCOVISION", ROBOT_COMMAND_RETURN),),
+            )
+
         return StoryTransition()
 
     def consume_robot_event(self, event: RobotEvent) -> StoryTransition:
@@ -128,6 +141,45 @@ class StoryEngine:
         self._stage = StoryStage.WAITING_COLOR
         return StoryTransition()
 
+    def consume_cocovision_return_result(self, event: RobotEvent) -> StoryTransition:
+        if self._stage is not StoryStage.WAITING_COCOVISION_RETURN_COMPLETION:
+            return StoryTransition()
+
+        if event.robot != "COCOVISION" or event.status != "DONE":
+            return StoryTransition()
+
+        self._stage = StoryStage.WAITING_VIDEO8_TRIGGER
+        return StoryTransition(
+            video_path=VIDEO7_PATH,
+            mock_video_duration=MOCK_VIDEO_DURATION_SECONDS,
+        )
+
+    def consume_video8_trigger(
+        self,
+        trigger_name: Optional[CameraTriggerName],
+    ) -> StoryTransition:
+        if self._stage is not StoryStage.WAITING_VIDEO8_TRIGGER:
+            return StoryTransition()
+
+        if trigger_name is CameraTriggerName.MAGNIFIER_MARKER_DETECTED:
+            self._stage = StoryStage.LOCKED_END
+            return StoryTransition(
+                video_path=VIDEO8_PATH,
+                mock_video_duration=MOCK_VIDEO_DURATION_SECONDS,
+            )
+
+        if (
+            ENABLE_DOUBLE_CLOSED_FIST_FOR_VIDEO8
+            and trigger_name is CameraTriggerName.DOUBLE_CLOSED_FIST_DETECTED
+        ):
+            self._stage = StoryStage.LOCKED_END
+            return StoryTransition(
+                video_path=VIDEO8_PATH,
+                mock_video_duration=MOCK_VIDEO_DURATION_SECONDS,
+            )
+
+        return StoryTransition()
+
     def consume_color_event(self, event: RobotEvent) -> StoryTransition:
         if self._stage is not StoryStage.WAITING_COLOR:
             return StoryTransition()
@@ -153,6 +205,10 @@ class StoryEngine:
         if self._stage is not StoryStage.PLAYING_COLOR_VIDEO:
             return False
 
+        if self._consumed_colors == set(COLOR_VIDEO_PATHS):
+            self._stage = StoryStage.WAITING_VIDEO7_TRIGGER
+            return True
+
         self._stage = StoryStage.WAITING_COLOR
         return True
 
@@ -167,6 +223,12 @@ class StoryEngine:
 
     def is_waiting_color(self) -> bool:
         return self._stage is StoryStage.WAITING_COLOR
+
+    def is_waiting_video7_trigger(self) -> bool:
+        return self._stage is StoryStage.WAITING_VIDEO7_TRIGGER
+
+    def is_waiting_video8_trigger(self) -> bool:
+        return self._stage is StoryStage.WAITING_VIDEO8_TRIGGER
 
     def _build_current_step(self) -> Optional[StoryStep]:
         if self._stage is StoryStage.WAIT_HAND_OPEN:
@@ -191,6 +253,12 @@ class StoryEngine:
             return StoryStep(
                 expected_gesture=GestureName.THUMB_UP,
                 next_stage=StoryStage.WAITING_COCOVISION_ACTION_COMPLETION,
+            )
+
+        if self._stage is StoryStage.WAITING_VIDEO7_TRIGGER:
+            return StoryStep(
+                expected_gesture=GestureName.CLOSED_FIST,
+                next_stage=StoryStage.WAITING_COCOVISION_RETURN_COMPLETION,
             )
 
         return None

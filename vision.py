@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import hypot
 from typing import Optional
 
 import cv2
@@ -8,6 +9,7 @@ import mediapipe as mp
 import numpy as np
 
 from config import (
+    ARUCO_MARKER_ID,
     CAMERA_INDEX,
     CAMERA_WARMUP_FRAMES,
     DETECTION_CONFIDENCE,
@@ -32,6 +34,7 @@ def _resolve_hands_api():
 
 @dataclass(frozen=True)
 class FingerState:
+    is_complete: bool
     thumb_open: bool
     thumb_up: bool
     index_open: bool
@@ -40,9 +43,17 @@ class FingerState:
     pinky_open: bool
 
 
+@dataclass(frozen=True)
+class VisionInputs:
+    gesture: Optional[GestureName]
+    marker_detected: bool
+
+
 class GestureClassifier:
     def classify(self, hand_landmarks, image_width: int, image_height: int) -> Optional[GestureName]:
         finger_state = self._extract_finger_state(hand_landmarks, image_width, image_height)
+        if not finger_state.is_complete:
+            return None
 
         if self._is_hand_open(finger_state):
             return GestureName.HAND_OPEN
@@ -56,6 +67,9 @@ class GestureClassifier:
         if self._is_point(finger_state):
             return GestureName.POINT
 
+        if self._is_closed_fist(finger_state):
+            return GestureName.CLOSED_FIST
+
         return None
 
     def _extract_finger_state(self, hand_landmarks, image_width: int, image_height: int) -> FingerState:
@@ -65,30 +79,64 @@ class GestureClassifier:
             point = landmark[index]
             return point.x * image_width, point.y * image_height
 
+        def point(index: int):
+            return landmark[index]
+
+        def distance(first_index: int, second_index: int) -> float:
+            first_x, first_y = to_pixel(first_index)
+            second_x, second_y = to_pixel(second_index)
+            return hypot(first_x - second_x, first_y - second_y)
+
+        is_complete = all(
+            0.0 <= point(index).x <= 1.0 and 0.0 <= point(index).y <= 1.0
+            for index in range(21)
+        )
+
         wrist_x, _ = to_pixel(0)
         thumb_tip_x, _ = to_pixel(4)
         thumb_ip_x, _ = to_pixel(3)
         thumb_tip_y = to_pixel(4)[1]
         thumb_ip_y = to_pixel(3)[1]
+        thumb_mcp_y = to_pixel(2)[1]
         index_mcp_y = to_pixel(5)[1]
 
         index_tip_y = to_pixel(8)[1]
         index_pip_y = to_pixel(6)[1]
+        index_mcp_x, index_mcp_y = to_pixel(5)
         middle_tip_y = to_pixel(12)[1]
         middle_pip_y = to_pixel(10)[1]
+        middle_mcp_y = to_pixel(9)[1]
         ring_tip_y = to_pixel(16)[1]
         ring_pip_y = to_pixel(14)[1]
+        ring_mcp_y = to_pixel(13)[1]
         pinky_tip_y = to_pixel(20)[1]
         pinky_pip_y = to_pixel(18)[1]
+        pinky_mcp_y = to_pixel(17)[1]
+
+        palm_size = max(distance(0, 9), distance(5, 17), 1.0)
+        thumb_reach = distance(4, 5) / palm_size
+        index_reach = distance(8, 5) / palm_size
+        middle_reach = distance(12, 9) / palm_size
+        ring_reach = distance(16, 13) / palm_size
+        pinky_reach = distance(20, 17) / palm_size
 
         thumb_open = self._is_thumb_extended(thumb_tip_x, thumb_ip_x, wrist_x)
+        thumb_up = all(
+            (
+                thumb_open,
+                thumb_reach > 0.7,
+                thumb_tip_y < thumb_ip_y < thumb_mcp_y,
+                thumb_tip_y < index_mcp_y,
+            )
+        )
         return FingerState(
+            is_complete=is_complete,
             thumb_open=thumb_open,
-            thumb_up=thumb_tip_y < thumb_ip_y and thumb_tip_y < index_mcp_y,
-            index_open=index_tip_y < index_pip_y,
-            middle_open=middle_tip_y < middle_pip_y,
-            ring_open=ring_tip_y < ring_pip_y,
-            pinky_open=pinky_tip_y < pinky_pip_y,
+            thumb_up=thumb_up,
+            index_open=index_tip_y < index_pip_y and index_reach > 0.9,
+            middle_open=middle_tip_y < middle_pip_y and middle_reach > 0.9,
+            ring_open=ring_tip_y < ring_pip_y and ring_reach > 0.85,
+            pinky_open=pinky_tip_y < pinky_pip_y and pinky_reach > 0.8,
         )
 
     @staticmethod
@@ -105,11 +153,11 @@ class GestureClassifier:
     def _is_hand_open(finger_state: FingerState) -> bool:
         return all(
             (
-                finger_state.thumb_open,
+                finger_state.is_complete,
                 finger_state.index_open,
                 finger_state.middle_open,
                 finger_state.ring_open,
-                finger_state.pinky_open,
+                finger_state.thumb_open or finger_state.pinky_open,
             )
         )
 
@@ -117,10 +165,12 @@ class GestureClassifier:
     def _is_point(finger_state: FingerState) -> bool:
         return all(
             (
+                finger_state.is_complete,
                 finger_state.index_open,
                 not finger_state.middle_open,
                 not finger_state.ring_open,
                 not finger_state.pinky_open,
+                not finger_state.thumb_up,
             )
         )
 
@@ -128,8 +178,11 @@ class GestureClassifier:
     def _is_v_sign(finger_state: FingerState) -> bool:
         return all(
             (
+                finger_state.is_complete,
                 finger_state.index_open,
                 finger_state.middle_open,
+                not finger_state.thumb_open,
+                not finger_state.thumb_up,
                 not finger_state.ring_open,
                 not finger_state.pinky_open,
             )
@@ -139,11 +192,26 @@ class GestureClassifier:
     def _is_thumb_up(finger_state: FingerState) -> bool:
         return all(
             (
+                finger_state.is_complete,
                 finger_state.thumb_up,
                 not finger_state.index_open,
                 not finger_state.middle_open,
                 not finger_state.ring_open,
                 not finger_state.pinky_open,
+            )
+        )
+
+    @staticmethod
+    def _is_closed_fist(finger_state: FingerState) -> bool:
+        return all(
+            (
+                finger_state.is_complete,
+                not finger_state.thumb_open,
+                not finger_state.index_open,
+                not finger_state.middle_open,
+                not finger_state.ring_open,
+                not finger_state.pinky_open,
+                not finger_state.thumb_up,
             )
         )
 
@@ -154,29 +222,109 @@ class VisionSystem:
         hands_api = _resolve_hands_api()
         self._hands = hands_api.Hands(
             static_image_mode=False,
-            max_num_hands=1,
+            max_num_hands=2,
             min_detection_confidence=DETECTION_CONFIDENCE,
             min_tracking_confidence=TRACKING_CONFIDENCE,
         )
         self._classifier = GestureClassifier()
+        self._aruco_detector = self._build_aruco_detector()
+        self._debug_frame_counter = 0
+        self._last_debug_message = ""
         self._warm_up_camera()
 
-    def detect_gesture(self) -> Optional[GestureName]:
+    def read_inputs(self) -> VisionInputs:
         if not self._camera.isOpened():
-            return None
+            return VisionInputs(gesture=None, marker_detected=False)
 
         success, frame = self._camera.read()
         if not success:
-            return None
+            return VisionInputs(gesture=None, marker_detected=False)
 
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        result = self._hands.process(rgb_frame)
-        if not result.multi_hand_landmarks:
+        hands_result = self._hands.process(rgb_frame)
+        gesture = self._detect_gesture(hands_result, frame.shape[1], frame.shape[0])
+        marker_detected = self._detect_marker(frame)
+        self._debug_detection(hands_result, frame.shape[1], frame.shape[0], gesture)
+        return VisionInputs(gesture=gesture, marker_detected=marker_detected)
+
+    def detect_gesture(self) -> Optional[GestureName]:
+        return self.read_inputs().gesture
+
+    def _detect_gesture(self, hands_result, image_width: int, image_height: int) -> Optional[GestureName]:
+        if not hands_result.multi_hand_landmarks:
             return None
 
-        image_height, image_width = frame.shape[:2]
-        first_hand = result.multi_hand_landmarks[0]
-        return self._classifier.classify(first_hand, image_width, image_height)
+        if len(hands_result.multi_hand_landmarks) >= 2:
+            first_gesture = self._classifier.classify(
+                hands_result.multi_hand_landmarks[0],
+                image_width,
+                image_height,
+            )
+            second_gesture = self._classifier.classify(
+                hands_result.multi_hand_landmarks[1],
+                image_width,
+                image_height,
+            )
+            if (
+                first_gesture is GestureName.CLOSED_FIST
+                and second_gesture is GestureName.CLOSED_FIST
+            ):
+                return GestureName.DOUBLE_CLOSED_FIST
+
+        for hand_landmarks in hands_result.multi_hand_landmarks[:1]:
+            gesture = self._classifier.classify(hand_landmarks, image_width, image_height)
+            if gesture in {
+                GestureName.HAND_OPEN,
+                GestureName.V_SIGN,
+                GestureName.THUMB_UP,
+                GestureName.POINT,
+                GestureName.CLOSED_FIST,
+            }:
+                return gesture
+
+        return None
+
+    def _debug_detection(self, hands_result, image_width: int, image_height: int, gesture: Optional[GestureName]) -> None:
+        self._debug_frame_counter += 1
+        if self._debug_frame_counter % 12 != 0:
+            return
+
+        hand_count = 0 if not hands_result.multi_hand_landmarks else len(hands_result.multi_hand_landmarks)
+        if hands_result.multi_hand_landmarks:
+            finger_state = self._classifier._extract_finger_state(
+                hands_result.multi_hand_landmarks[0],
+                image_width,
+                image_height,
+            )
+            message = (
+                "[Vision] "
+                f"hands={hand_count} "
+                f"gesture={gesture.value if gesture else 'NONE'} "
+                f"fingers=("
+                f"T:{int(finger_state.thumb_open)} "
+                f"I:{int(finger_state.index_open)} "
+                f"M:{int(finger_state.middle_open)} "
+                f"R:{int(finger_state.ring_open)} "
+                f"P:{int(finger_state.pinky_open)})"
+            )
+        else:
+            message = f"[Vision] hands={hand_count} gesture={gesture.value if gesture else 'NONE'}"
+
+        if message == self._last_debug_message:
+            return
+
+        self._last_debug_message = message
+        print(message)
+
+    def _detect_marker(self, frame) -> bool:
+        if self._aruco_detector is None:
+            return False
+
+        corners, ids, _rejected = self._aruco_detector.detectMarkers(frame)
+        if ids is None:
+            return False
+
+        return any(int(marker_id[0]) == ARUCO_MARKER_ID for marker_id in ids)
 
     def release(self) -> None:
         self._camera.release()
@@ -185,3 +333,13 @@ class VisionSystem:
     def _warm_up_camera(self) -> None:
         for _ in range(CAMERA_WARMUP_FRAMES):
             self._camera.read()
+
+    @staticmethod
+    def _build_aruco_detector():
+        aruco = getattr(cv2, "aruco", None)
+        if aruco is None:
+            return None
+
+        dictionary = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
+        parameters = aruco.DetectorParameters()
+        return aruco.ArucoDetector(dictionary, parameters)

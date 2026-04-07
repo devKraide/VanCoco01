@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from config import AppState, EXIT_KEYS, GestureName, KEY_ACTIONS
+from config import (
+    AppState,
+    CameraTriggerName,
+    ENABLE_DOUBLE_CLOSED_FIST_FOR_VIDEO8,
+    EXIT_KEYS,
+    GestureName,
+    KEY_ACTIONS,
+)
 from gesture_mapper import GestureMapper
 from media_controller import MediaController
 from robot_comm import RobotComm
@@ -25,12 +32,13 @@ class VanCocoApp:
                 self._media_controller.update_ui()
                 self._render_current_state()
                 key_code = self._media_controller.consume_key()
+                vision_inputs = self._vision_system.read_inputs()
 
                 if key_code in EXIT_KEYS:
                     break
 
                 if self._state_manager.state is AppState.IDLE_BLACK_SCREEN:
-                    self._handle_idle_state(key_code)
+                    self._handle_idle_state(key_code, vision_inputs)
                     continue
 
                 if self._state_manager.state is AppState.PLAYING_VIDEO:
@@ -42,11 +50,11 @@ class VanCocoApp:
                     continue
 
                 if self._state_manager.state is AppState.WAITING_COCOMAG_ACTION:
-                    self._handle_waiting_cocomag_action_state(key_code)
+                    self._handle_waiting_cocomag_action_state(key_code, vision_inputs)
                     continue
 
                 if self._state_manager.state is AppState.WAITING_VIDEO5_TRIGGER:
-                    self._handle_waiting_video5_trigger_state(key_code)
+                    self._handle_waiting_video5_trigger_state(key_code, vision_inputs)
                     continue
 
                 if self._state_manager.state is AppState.WAITING_COCOVISION_ACTION_COMPLETION:
@@ -55,6 +63,18 @@ class VanCocoApp:
 
                 if self._state_manager.state is AppState.WAITING_COLOR:
                     self._handle_waiting_color_state()
+                    continue
+
+                if self._state_manager.state is AppState.WAITING_VIDEO7_TRIGGER:
+                    self._handle_waiting_video7_trigger_state(key_code, vision_inputs)
+                    continue
+
+                if self._state_manager.state is AppState.WAITING_VIDEO8_TRIGGER:
+                    self._handle_waiting_video8_trigger_state(vision_inputs)
+                    continue
+
+                if self._state_manager.state is AppState.WAITING_COCOVISION_RETURN_COMPLETION:
+                    self._handle_waiting_cocovision_return_completion_state()
                     continue
 
                 self._handle_waiting_cocomag_action_completion_state()
@@ -71,12 +91,15 @@ class VanCocoApp:
             AppState.WAITING_VIDEO5_TRIGGER,
             AppState.WAITING_COCOVISION_ACTION_COMPLETION,
             AppState.WAITING_COLOR,
+            AppState.WAITING_VIDEO7_TRIGGER,
+            AppState.WAITING_COCOVISION_RETURN_COMPLETION,
+            AppState.WAITING_VIDEO8_TRIGGER,
         }:
             self._media_controller.show_black_screen()
 
-    def _handle_idle_state(self, key_code: int) -> None:
+    def _handle_idle_state(self, key_code: int, vision_inputs) -> None:
         gesture_result = self._story_engine.consume_trigger(
-            self._read_trigger_source(key_code)
+            self._read_trigger_source(key_code, vision_inputs)
         )
         if gesture_result is None:
             return
@@ -101,6 +124,9 @@ class VanCocoApp:
         if self._story_engine.consume_color_video_finished():
             self._robot_comm.clear_color_events()
             self._robot_comm.set_color_events_enabled(True)
+            if self._story_engine.is_waiting_video7_trigger():
+                self._state_manager.enter_waiting_video7_trigger()
+                return
             self._state_manager.enter_waiting_color()
             return
 
@@ -129,6 +155,14 @@ class VanCocoApp:
             self._state_manager.enter_waiting_color()
             return
 
+        if self._story_engine.is_waiting_video7_trigger():
+            self._state_manager.enter_waiting_video7_trigger()
+            return
+
+        if self._story_engine.is_waiting_video8_trigger():
+            self._state_manager.enter_waiting_video8_trigger()
+            return
+
         self._state_manager.finish_playback()
 
     def _handle_waiting_presentation_state(self) -> None:
@@ -145,9 +179,9 @@ class VanCocoApp:
             self._media_controller.start_mock_video(transition.mock_video_duration)
             return
 
-    def _handle_waiting_cocomag_action_state(self, key_code: int) -> None:
+    def _handle_waiting_cocomag_action_state(self, key_code: int, vision_inputs) -> None:
         gesture_result = self._story_engine.consume_trigger(
-            self._read_trigger_source(key_code)
+            self._read_trigger_source(key_code, vision_inputs)
         )
         if gesture_result is None or gesture_result.gesture is not GestureName.V_SIGN:
             return
@@ -171,9 +205,9 @@ class VanCocoApp:
             self._media_controller.start_mock_video(transition.mock_video_duration)
             return
 
-    def _handle_waiting_video5_trigger_state(self, key_code: int) -> None:
+    def _handle_waiting_video5_trigger_state(self, key_code: int, vision_inputs) -> None:
         gesture_result = self._story_engine.consume_trigger(
-            self._read_trigger_source(key_code)
+            self._read_trigger_source(key_code, vision_inputs)
         )
         if gesture_result is None or gesture_result.gesture is not GestureName.THUMB_UP:
             return
@@ -215,13 +249,63 @@ class VanCocoApp:
             self._media_controller.start_mock_video(transition.mock_video_duration)
             return
 
-    def _read_trigger_source(self, key_code: int):
+    def _handle_waiting_video7_trigger_state(self, key_code: int, vision_inputs) -> None:
+        gesture_result = self._story_engine.consume_trigger(
+            self._read_trigger_source(key_code, vision_inputs)
+        )
+        if gesture_result is None or gesture_result.gesture is not GestureName.CLOSED_FIST:
+            return
+
+        transition = self._story_engine.complete_active_step()
+        for robot_name, command in transition.robot_commands:
+            self._robot_comm.send_command(robot_name, command)
+        self._state_manager.enter_waiting_cocovision_return_completion()
+
+    def _handle_waiting_cocovision_return_completion_state(self) -> None:
+        for event in self._robot_comm.poll_events():
+            transition = self._story_engine.consume_cocovision_return_result(event)
+            if transition.video_path is None:
+                continue
+
+            self._state_manager.start_system_playback(transition.video_path)
+            if transition.video_path.exists():
+                self._media_controller.start_video(transition.video_path)
+                return
+
+            self._media_controller.start_mock_video(transition.mock_video_duration)
+            return
+
+    def _handle_waiting_video8_trigger_state(self, vision_inputs) -> None:
+        trigger_name = self._read_video8_trigger_source(vision_inputs)
+        transition = self._story_engine.consume_video8_trigger(trigger_name)
+        if transition.video_path is None:
+            return
+
+        self._state_manager.start_system_playback(transition.video_path)
+        if transition.video_path.exists():
+            self._media_controller.start_video(transition.video_path)
+            return
+
+        self._media_controller.start_mock_video(transition.mock_video_duration)
+
+    def _read_trigger_source(self, key_code: int, vision_inputs):
         keyboard_gesture = KEY_ACTIONS.get(key_code) if key_code is not None else None
         if keyboard_gesture is not None:
             return self._gesture_mapper.map_gesture(keyboard_gesture)
 
-        detected_gesture = self._vision_system.detect_gesture()
-        return self._gesture_mapper.map_gesture(detected_gesture)
+        return self._gesture_mapper.map_gesture(vision_inputs.gesture)
+
+    def _read_video8_trigger_source(self, vision_inputs):
+        if vision_inputs.marker_detected:
+            return CameraTriggerName.MAGNIFIER_MARKER_DETECTED
+
+        if (
+            ENABLE_DOUBLE_CLOSED_FIST_FOR_VIDEO8
+            and vision_inputs.gesture is GestureName.DOUBLE_CLOSED_FIST
+        ):
+            return CameraTriggerName.DOUBLE_CLOSED_FIST_DETECTED
+
+        return None
 
 
 if __name__ == "__main__":

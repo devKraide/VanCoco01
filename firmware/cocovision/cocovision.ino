@@ -33,6 +33,7 @@ void publishColorIfNeeded(const String& colorName);
 void handleCommand(const String& command);
 void runPresentation();
 void runAction();
+void runReturn();
 void moveForward();
 void moveBackward();
 void turnRight();
@@ -111,6 +112,13 @@ void handleCommand(const String& command) {
     isPresenting = true;
     runAction();
     isPresenting = false;
+    return;
+  }
+
+  if (normalized == "COCOVISION:RETURN") {
+    isPresenting = true;
+    runReturn();
+    isPresenting = false;
   }
 }
 
@@ -188,6 +196,17 @@ void runAction() {
   sensorActive = true;
   lastColor = "";
   lastSentAt = 0;
+  Serial.println("COCOVISION_DONE");
+}
+
+void runReturn() {
+  sensorActive = false;
+  moveBackward();
+  delay(FORWARD_MS);
+
+  stopMotors();
+  delay(STOP_MS);
+
   Serial.println("COCOVISION_DONE");
 }
 

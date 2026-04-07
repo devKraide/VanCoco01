@@ -81,6 +81,18 @@ class StateManager:
         self._active_request = None
         self._state = AppState.WAITING_COLOR
 
+    def enter_waiting_video7_trigger(self) -> None:
+        self._active_request = None
+        self._state = AppState.WAITING_VIDEO7_TRIGGER
+
+    def enter_waiting_cocovision_return_completion(self) -> None:
+        self._active_request = None
+        self._state = AppState.WAITING_COCOVISION_RETURN_COMPLETION
+
+    def enter_waiting_video8_trigger(self) -> None:
+        self._active_request = None
+        self._state = AppState.WAITING_VIDEO8_TRIGGER
+
     def finish_playback(self) -> None:
         self._active_request = None
         self._state = AppState.IDLE_BLACK_SCREEN

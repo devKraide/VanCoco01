@@ -19,6 +19,9 @@ class AppState(Enum):
     WAITING_VIDEO5_TRIGGER = "waiting_video5_trigger"
     WAITING_COCOVISION_ACTION_COMPLETION = "waiting_cocovision_action_completion"
     WAITING_COLOR = "waiting_color"
+    WAITING_VIDEO7_TRIGGER = "waiting_video7_trigger"
+    WAITING_COCOVISION_RETURN_COMPLETION = "waiting_cocovision_return_completion"
+    WAITING_VIDEO8_TRIGGER = "waiting_video8_trigger"
 
 
 class GestureName(Enum):
@@ -26,6 +29,13 @@ class GestureName(Enum):
     POINT = "POINT"
     V_SIGN = "V_SIGN"
     THUMB_UP = "THUMB_UP"
+    CLOSED_FIST = "CLOSED_FIST"
+    DOUBLE_CLOSED_FIST = "DOUBLE_CLOSED_FIST"
+
+
+class CameraTriggerName(Enum):
+    MAGNIFIER_MARKER_DETECTED = "magnifier_marker_detected"
+    DOUBLE_CLOSED_FIST_DETECTED = "double_closed_fist_detected"
 
 
 @dataclass(frozen=True)
@@ -47,11 +57,17 @@ VIDEO_ACTIONS = {
         gesture=GestureName.THUMB_UP,
         video_path=MEDIA_DIR / "video5.mp4",
     ),
+    GestureName.CLOSED_FIST: VideoAction(
+        gesture=GestureName.CLOSED_FIST,
+        video_path=MEDIA_DIR / "video7.mp4",
+    ),
 }
 
 VIDEO3_PATH = MEDIA_DIR / "video3.mp4"
 VIDEO4_PATH = MEDIA_DIR / "video4.mp4"
 VIDEO5_PATH = MEDIA_DIR / "video5.mp4"
+VIDEO7_PATH = MEDIA_DIR / "video7.mp4"
+VIDEO8_PATH = MEDIA_DIR / "video8.mp4"
 COLOR_VIDEO_PATHS = {
     "COLOR_RED": MEDIA_DIR / "video6_red.mp4",
     "COLOR_GREEN": MEDIA_DIR / "video6_green.mp4",
@@ -71,10 +87,14 @@ CAMERA_WARMUP_FRAMES = 5
 DETECTION_CONFIDENCE = 0.65
 TRACKING_CONFIDENCE = 0.65
 DEBOUNCE_SECONDS = 1.5
+GESTURE_STABLE_FRAMES = 4
 ROBOT_NAMES = ("COCOMAG", "COCOVISION")
 ROBOT_COMMAND_PRESENT = "PRESENT"
 ROBOT_COMMAND_ACTION = "ACTION"
+ROBOT_COMMAND_RETURN = "RETURN"
 ROBOT_COMMAND_SCAN = "SCAN"
 MOCK_VIDEO_DURATION_SECONDS = 2.0
 COCOMAG_BAUDRATE = 115200
 COCOVISION_BAUDRATE = 115200
+ARUCO_MARKER_ID = 7
+ENABLE_DOUBLE_CLOSED_FIST_FOR_VIDEO8 = True
