@@ -29,6 +29,7 @@ class VanCocoApp:
         try:
             self._media_controller.show_black_screen()
             while not self._media_controller.should_close():
+                # Main orchestration loop: refresh UI, sample inputs, then dispatch by AppState.
                 self._media_controller.update_ui()
                 self._render_current_state()
                 key_code = self._media_controller.consume_key()
@@ -130,6 +131,7 @@ class VanCocoApp:
             return
 
         self._media_controller.stop_video()
+        # Color videos are a loopable branch: after each one finishes, the app may return to WAITING_COLOR.
         if self._story_engine.consume_color_video_finished():
             self._robot_comm.clear_color_events()
             self._robot_comm.set_color_events_enabled(True)
