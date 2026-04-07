@@ -1,5 +1,13 @@
+#include <Arduino.h>
+#include <BluetoothSerial.h>
 #include <Wire.h>
 #include <Adafruit_TCS34725.h>
+
+#if defined(CONFIG_BT_ENABLED) && defined(CONFIG_BLUEDROID_ENABLED)
+#define COCOVISION_BT_AVAILABLE 1
+#else
+#define COCOVISION_BT_AVAILABLE 0
+#endif
 
 constexpr unsigned long SERIAL_BAUDRATE = 115200;
 constexpr unsigned long DETECTION_DEBOUNCE_MS = 1200;
@@ -24,13 +32,19 @@ Adafruit_TCS34725 tcs =
 
 String lastColor = "";
 String serialBuffer = "";
+String bluetoothBuffer = "";
 unsigned long lastSentAt = 0;
 bool isPresenting = false;
 bool sensorActive = false;
+#if COCOVISION_BT_AVAILABLE
+BluetoothSerial SerialBT;
+#endif
 
 String detectDominantColor(uint16_t red, uint16_t green, uint16_t blue, uint16_t clear);
 void publishColorIfNeeded(const String& colorName);
 void handleCommand(const String& command);
+void readCommandStream(Stream& stream, String& buffer);
+void emitLine(const char* message);
 void runPresentation();
 void runAction();
 void runReturn();
@@ -43,6 +57,11 @@ void setMotorB(bool forward, int speedValue);
 
 void setup() {
   Serial.begin(SERIAL_BAUDRATE);
+#if COCOVISION_BT_AVAILABLE
+  SerialBT.begin("COCOVISION");
+#else
+  Serial.println("COCOVISION_BT_UNAVAILABLE");
+#endif
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   pinMode(ENA, OUTPUT);
   pinMode(IN1, OUTPUT);
@@ -61,18 +80,10 @@ void setup() {
 }
 
 void loop() {
-  while (Serial.available() > 0) {
-    char incoming = static_cast<char>(Serial.read());
-    if (incoming == '\n' || incoming == '\r') {
-      if (!serialBuffer.isEmpty()) {
-        handleCommand(serialBuffer);
-        serialBuffer = "";
-      }
-      continue;
-    }
-
-    serialBuffer += incoming;
-  }
+  readCommandStream(Serial, serialBuffer);
+#if COCOVISION_BT_AVAILABLE
+  readCommandStream(SerialBT, bluetoothBuffer);
+#endif
 
   if (isPresenting) {
     return;
@@ -157,9 +168,8 @@ void publishColorIfNeeded(const String& colorName) {
     return;
   }
 
-  Serial.print("COCOVISION_COLOR=");
-  Serial.println(colorName);
-  Serial.println(colorName);
+  emitLine(("COCOVISION_COLOR=" + colorName).c_str());
+  emitLine(colorName.c_str());
   lastColor = colorName;
   lastSentAt = now;
 }
@@ -183,7 +193,7 @@ void runPresentation() {
   stopMotors();
   delay(STOP_MS);
 
-  Serial.println("COCOVISION_DONE");
+  emitLine("COCOVISION_DONE");
 }
 
 void runAction() {
@@ -196,7 +206,7 @@ void runAction() {
   sensorActive = true;
   lastColor = "";
   lastSentAt = 0;
-  Serial.println("COCOVISION_DONE");
+  emitLine("COCOVISION_DONE");
 }
 
 void runReturn() {
@@ -207,7 +217,31 @@ void runReturn() {
   stopMotors();
   delay(STOP_MS);
 
-  Serial.println("COCOVISION_DONE");
+  emitLine("COCOVISION_DONE");
+}
+
+void readCommandStream(Stream& stream, String& buffer) {
+  while (stream.available() > 0) {
+    char incoming = static_cast<char>(stream.read());
+    if (incoming == '\n' || incoming == '\r') {
+      if (!buffer.isEmpty()) {
+        handleCommand(buffer);
+        buffer = "";
+      }
+      continue;
+    }
+
+    buffer += incoming;
+  }
+}
+
+void emitLine(const char* message) {
+  Serial.println(message);
+#if COCOVISION_BT_AVAILABLE
+  if (SerialBT.hasClient()) {
+    SerialBT.println(message);
+  }
+#endif
 }
 
 void moveForward() {

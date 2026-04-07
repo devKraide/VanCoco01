@@ -1,5 +1,12 @@
 #include <Arduino.h>
+#include <BluetoothSerial.h>
 #include <ESP32Servo.h>
+
+#if defined(CONFIG_BT_ENABLED) && defined(CONFIG_BLUEDROID_ENABLED)
+#define COCOMAG_BT_AVAILABLE 1
+#else
+#define COCOMAG_BT_AVAILABLE 0
+#endif
 
 constexpr int ENA = 5;
 constexpr int IN1 = 18;
@@ -19,8 +26,12 @@ constexpr int SERVO_ACTION_ANGLE = 90;
 constexpr unsigned long SERVO_HOLD_MS = 700;
 
 String serialBuffer;
+String bluetoothBuffer;
 bool isPresenting = false;
 Servo actionServo;
+#if COCOMAG_BT_AVAILABLE
+BluetoothSerial SerialBT;
+#endif
 
 void setMotorA(bool forward, int speedValue);
 void setMotorB(bool forward, int speedValue);
@@ -31,9 +42,16 @@ void stopMotors();
 void runPresentation();
 void runAction();
 void handleCommand(const String& command);
+void readCommandStream(Stream& stream, String& buffer);
+void emitLine(const char* message);
 
 void setup() {
   Serial.begin(115200);
+#if COCOMAG_BT_AVAILABLE
+  SerialBT.begin("COCOMAG");
+#else
+  Serial.println("COCOMAG_BT_UNAVAILABLE");
+#endif
 
   pinMode(ENA, OUTPUT);
   pinMode(IN1, OUTPUT);
@@ -49,18 +67,10 @@ void setup() {
 }
 
 void loop() {
-  while (Serial.available() > 0) {
-    char incoming = static_cast<char>(Serial.read());
-    if (incoming == '\n' || incoming == '\r') {
-      if (!serialBuffer.isEmpty()) {
-        handleCommand(serialBuffer);
-        serialBuffer = "";
-      }
-      continue;
-    }
-
-    serialBuffer += incoming;
-  }
+  readCommandStream(Serial, serialBuffer);
+#if COCOMAG_BT_AVAILABLE
+  readCommandStream(SerialBT, bluetoothBuffer);
+#endif
 }
 
 void handleCommand(const String& command) {
@@ -108,7 +118,7 @@ void runPresentation() {
   stopMotors();
   delay(STOP_MS);
 
-  Serial.println("COCOMAG_DONE");
+  emitLine("COCOMAG_DONE");
 }
 
 void runAction() {
@@ -124,7 +134,31 @@ void runAction() {
   actionServo.write(SERVO_REST_ANGLE);
   delay(STOP_MS);
 
-  Serial.println("COCOMAG_DONE");
+  emitLine("COCOMAG_DONE");
+}
+
+void readCommandStream(Stream& stream, String& buffer) {
+  while (stream.available() > 0) {
+    char incoming = static_cast<char>(stream.read());
+    if (incoming == '\n' || incoming == '\r') {
+      if (!buffer.isEmpty()) {
+        handleCommand(buffer);
+        buffer = "";
+      }
+      continue;
+    }
+
+    buffer += incoming;
+  }
+}
+
+void emitLine(const char* message) {
+  Serial.println(message);
+#if COCOMAG_BT_AVAILABLE
+  if (SerialBT.hasClient()) {
+    SerialBT.println(message);
+  }
+#endif
 }
 
 void moveForward() {
