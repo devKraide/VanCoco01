@@ -2,15 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import hypot
+import time
 from typing import Optional
 
 import cv2
 import mediapipe as mp
-import numpy as np
 
 from config import (
     ARUCO_MARKER_ID,
     CAMERA_INDEX,
+    CAMERA_FRAME_HEIGHT,
+    CAMERA_FRAME_WIDTH,
     CAMERA_WARMUP_FRAMES,
     DETECTION_CONFIDENCE,
     GestureName,
@@ -20,6 +22,7 @@ from config import (
     PRAYER_CHEST_HEIGHT_MIN_RATIO,
     PRAYER_WRIST_DISTANCE_RATIO,
     TRACKING_CONFIDENCE,
+    VISION_PERF_LOG,
 )
 
 
@@ -69,10 +72,31 @@ class VisionInputs:
 
 
 class GestureClassifier:
-    def classify(self, hand_landmarks, image_width: int, image_height: int) -> Optional[GestureName]:
+    def classify(
+        self,
+        hand_landmarks,
+        image_width: int,
+        image_height: int,
+        expected_gesture: Optional[GestureName] = None,
+    ) -> Optional[GestureName]:
         finger_state = self._extract_finger_state(hand_landmarks, image_width, image_height)
         if not finger_state.is_complete:
             return None
+
+        if expected_gesture is GestureName.HAND_OPEN:
+            return GestureName.HAND_OPEN if self._is_hand_open(finger_state) else None
+
+        if expected_gesture is GestureName.V_SIGN:
+            return GestureName.V_SIGN if self._is_v_sign(finger_state) else None
+
+        if expected_gesture is GestureName.THUMB_UP:
+            return GestureName.THUMB_UP if self._is_thumb_up(finger_state) else None
+
+        if expected_gesture is GestureName.POINT:
+            return GestureName.POINT if self._is_point(finger_state) else None
+
+        if expected_gesture is GestureName.CLOSED_FIST:
+            return GestureName.CLOSED_FIST if self._is_closed_fist(finger_state) else None
 
         if self._is_hand_open(finger_state):
             return GestureName.HAND_OPEN
@@ -238,9 +262,17 @@ class GestureClassifier:
 class VisionSystem:
     def __init__(self) -> None:
         self._camera = cv2.VideoCapture(CAMERA_INDEX)
+        self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_FRAME_WIDTH)
+        self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_FRAME_HEIGHT)
         hands_api = _resolve_hands_api()
         pose_api = _resolve_pose_api()
-        self._hands = hands_api.Hands(
+        self._hands_single = hands_api.Hands(
+            static_image_mode=False,
+            max_num_hands=1,
+            min_detection_confidence=DETECTION_CONFIDENCE,
+            min_tracking_confidence=TRACKING_CONFIDENCE,
+        )
+        self._hands_double = hands_api.Hands(
             static_image_mode=False,
             max_num_hands=2,
             min_detection_confidence=DETECTION_CONFIDENCE,
@@ -248,7 +280,7 @@ class VisionSystem:
         )
         self._pose = pose_api.Pose(
             static_image_mode=False,
-            model_complexity=1,
+            model_complexity=0,
             min_detection_confidence=DETECTION_CONFIDENCE,
             min_tracking_confidence=TRACKING_CONFIDENCE,
         )
@@ -258,36 +290,64 @@ class VisionSystem:
         self._last_debug_message = ""
         self._warm_up_camera()
 
-    def read_inputs(self, prioritize_prayer_hands: bool = False) -> VisionInputs:
+    def read_inputs(
+        self,
+        expected_gesture: Optional[GestureName] = None,
+        detect_marker: bool = False,
+        prioritize_prayer_hands: bool = False,
+        allow_double_closed_fist: bool = False,
+    ) -> VisionInputs:
         if not self._camera.isOpened():
             return VisionInputs(gesture=None, marker_detected=False)
 
+        started_at = time.monotonic()
         success, frame = self._camera.read()
         if not success:
             return VisionInputs(gesture=None, marker_detected=False)
 
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        hands_result = self._hands.process(rgb_frame)
-        pose_result = self._pose.process(rgb_frame)
+        hands_result = None
+        pose_result = None
+
+        should_run_pose = prioritize_prayer_hands or expected_gesture is GestureName.PRAYER_HANDS
+        should_run_hands = expected_gesture is not GestureName.PRAYER_HANDS or allow_double_closed_fist
+
+        if should_run_hands:
+            hands_runner = self._hands_double if allow_double_closed_fist else self._hands_single
+            hands_result = hands_runner.process(rgb_frame)
+
+        if should_run_pose:
+            pose_result = self._pose.process(rgb_frame)
+
         gesture = self._detect_gesture(
             hands_result,
             pose_result,
             frame.shape[1],
             frame.shape[0],
             prioritize_prayer_hands,
+            expected_gesture,
+            allow_double_closed_fist,
         )
-        marker_detected = self._detect_marker(frame)
+        marker_detected = self._detect_marker(frame) if detect_marker else False
         self._debug_detection(
             hands_result,
             frame.shape[1],
             frame.shape[0],
             gesture,
             prioritize_prayer_hands,
+            time.monotonic() - started_at,
         )
         return VisionInputs(gesture=gesture, marker_detected=marker_detected)
 
-    def detect_gesture(self, prioritize_prayer_hands: bool = False) -> Optional[GestureName]:
-        return self.read_inputs(prioritize_prayer_hands=prioritize_prayer_hands).gesture
+    def detect_gesture(
+        self,
+        expected_gesture: Optional[GestureName] = None,
+        prioritize_prayer_hands: bool = False,
+    ) -> Optional[GestureName]:
+        return self.read_inputs(
+            expected_gesture=expected_gesture,
+            prioritize_prayer_hands=prioritize_prayer_hands,
+        ).gesture
 
     def _detect_gesture(
         self,
@@ -296,21 +356,25 @@ class VisionSystem:
         image_width: int,
         image_height: int,
         prioritize_prayer_hands: bool,
+        expected_gesture: Optional[GestureName],
+        allow_double_closed_fist: bool,
     ) -> Optional[GestureName]:
         if prioritize_prayer_hands and self._detect_prayer_hands(pose_result):
             return GestureName.PRAYER_HANDS
 
-        if hands_result.multi_hand_landmarks:
-            if len(hands_result.multi_hand_landmarks) >= 2:
+        if hands_result is not None and hands_result.multi_hand_landmarks:
+            if allow_double_closed_fist and len(hands_result.multi_hand_landmarks) >= 2:
                 first_gesture = self._classifier.classify(
                     hands_result.multi_hand_landmarks[0],
                     image_width,
                     image_height,
+                    GestureName.CLOSED_FIST,
                 )
                 second_gesture = self._classifier.classify(
                     hands_result.multi_hand_landmarks[1],
                     image_width,
                     image_height,
+                    GestureName.CLOSED_FIST,
                 )
                 if (
                     first_gesture is GestureName.CLOSED_FIST
@@ -319,7 +383,12 @@ class VisionSystem:
                     return GestureName.DOUBLE_CLOSED_FIST
 
             for hand_landmarks in hands_result.multi_hand_landmarks[:1]:
-                gesture = self._classifier.classify(hand_landmarks, image_width, image_height)
+                gesture = self._classifier.classify(
+                    hand_landmarks,
+                    image_width,
+                    image_height,
+                    expected_gesture,
+                )
                 if gesture in {
                     GestureName.HAND_OPEN,
                     GestureName.V_SIGN,
@@ -395,15 +464,20 @@ class VisionSystem:
         image_height: int,
         gesture: Optional[GestureName],
         prioritize_prayer_hands: bool,
+        elapsed_seconds: float,
     ) -> None:
+        if not VISION_PERF_LOG:
+            return
+
         self._debug_frame_counter += 1
         if self._debug_frame_counter % 12 != 0:
             return
 
-        hand_count = 0 if not hands_result.multi_hand_landmarks else len(hands_result.multi_hand_landmarks)
-        if hands_result.multi_hand_landmarks:
+        hand_landmarks_list = [] if hands_result is None or not hands_result.multi_hand_landmarks else hands_result.multi_hand_landmarks
+        hand_count = len(hand_landmarks_list)
+        if hand_landmarks_list:
             finger_state = self._classifier._extract_finger_state(
-                hands_result.multi_hand_landmarks[0],
+                hand_landmarks_list[0],
                 image_width,
                 image_height,
             )
@@ -411,6 +485,7 @@ class VisionSystem:
                 "[Vision] "
                 f"hands={hand_count} "
                 f"prayer_priority={'ON' if prioritize_prayer_hands else 'OFF'} "
+                f"dt_ms={elapsed_seconds * 1000:.1f} "
                 f"gesture={gesture.value if gesture else 'NONE'} "
                 f"fingers=("
                 f"T:{int(finger_state.thumb_open)} "
@@ -424,6 +499,7 @@ class VisionSystem:
                 "[Vision] "
                 f"hands={hand_count} "
                 f"prayer_priority={'ON' if prioritize_prayer_hands else 'OFF'} "
+                f"dt_ms={elapsed_seconds * 1000:.1f} "
                 f"gesture={gesture.value if gesture else 'NONE'}"
             )
 
@@ -445,7 +521,8 @@ class VisionSystem:
 
     def release(self) -> None:
         self._camera.release()
-        self._hands.close()
+        self._hands_single.close()
+        self._hands_double.close()
         self._pose.close()
 
     def _warm_up_camera(self) -> None:
