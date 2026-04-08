@@ -119,8 +119,9 @@ class RobotComm:
 
         try:
             connection = serial.Serial(port, self._get_baudrate(robot), timeout=0.1)
-            connection.reset_input_buffer()
-            connection.reset_output_buffer()
+            if mode == "serial":
+                connection.reset_input_buffer()
+                connection.reset_output_buffer()
             self._reserved_ports.add(port)
             self._connections[robot] = connection
         except serial.SerialException as exc:
@@ -151,6 +152,7 @@ class RobotComm:
 
         try:
             with self._serial_lock:
+                print(f"[RobotComm] Enviando para {robot}: {robot}:{command}")
                 connection.write(f"{robot}:{command}\n".encode("utf-8"))
                 connection.flush()
             return True
