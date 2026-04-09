@@ -295,7 +295,7 @@ void setMotorA(bool forward, int speedValue) {
 }
 
 void setMotorB(bool forward, int speedValue) {
-  digitalWrite(IN3, forward ? HIGH : LOW);
-  digitalWrite(IN4, forward ? LOW : HIGH);
+  digitalWrite(IN3, forward ? LOW : HIGH);
+  digitalWrite(IN4, forward ? HIGH : LOW);
   analogWrite(ENB, speedValue);
 }
