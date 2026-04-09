@@ -38,10 +38,12 @@ constexpr unsigned long SERVO_SWING_HOLD_MS = 450;
 constexpr unsigned long SERVO_HOLD_MS = 700;
 constexpr float GYRO_Z_LSB_PER_DPS = 131.0f;
 constexpr float PRESENT_TARGET_DEGREES = 360.0f;
+constexpr float GYRO_ANGLE_CORRECTION = 1.33f;
 constexpr unsigned long ROTATION_TIMEOUT_MS = 6000;
 constexpr unsigned long GYRO_CALIBRATION_SAMPLES = 120;
 constexpr unsigned long GYRO_SAMPLE_DELAY_MS = 5;
 constexpr float GYRO_NOISE_FLOOR_DPS = 2.0f;
+constexpr unsigned long GYRO_DEBUG_LOG_INTERVAL_MS = 250;
 
 String serialBuffer;
 String bluetoothBuffer;
@@ -221,6 +223,7 @@ bool rotateDegrees(float targetDegrees) {
 
   unsigned long startedAt = millis();
   unsigned long lastSampleAt = micros();
+  unsigned long lastDebugLogAt = millis();
   float accumulatedDegrees = 0.0f;
 
   turnRight();
@@ -231,8 +234,24 @@ bool rotateDegrees(float targetDegrees) {
 
     float gyroZDps = (mpu.getRotationZ() / GYRO_Z_LSB_PER_DPS) - gyroZBiasDps;
     if (fabsf(gyroZDps) >= GYRO_NOISE_FLOOR_DPS) {
-      float deltaDegrees = fabsf(gyroZDps) * deltaSeconds;
+      float deltaDegrees = fabsf(gyroZDps) * deltaSeconds * GYRO_ANGLE_CORRECTION;
       accumulatedDegrees += deltaDegrees;
+    }
+
+    if (millis() - lastDebugLogAt >= GYRO_DEBUG_LOG_INTERVAL_MS) {
+      lastDebugLogAt = millis();
+      Serial.print("COCOMAG_MPU_Z_DPS=");
+      Serial.print(gyroZDps, 1);
+      Serial.print(" ANGLE=");
+      Serial.println(accumulatedDegrees, 1);
+#if COCOMAG_BT_AVAILABLE
+      if (SerialBT.hasClient()) {
+        SerialBT.print("COCOMAG_MPU_Z_DPS=");
+        SerialBT.print(gyroZDps, 1);
+        SerialBT.print(" ANGLE=");
+        SerialBT.println(accumulatedDegrees, 1);
+      }
+#endif
     }
 
     if (millis() - startedAt > ROTATION_TIMEOUT_MS) {
