@@ -19,6 +19,8 @@ constexpr int IN4 = 27;
 constexpr int SERVO_PIN = 13;
 constexpr int I2C_SDA_PIN = 21;
 constexpr int I2C_SCL_PIN = 22;
+constexpr bool MOTOR_A_INVERTED = false;
+constexpr bool MOTOR_B_INVERTED = true;
 
 constexpr int MOTOR_SPEED = 180;
 constexpr unsigned long FORWARD_MS = 900;
@@ -289,13 +291,15 @@ void stopMotors() {
 }
 
 void setMotorA(bool forward, int speedValue) {
-  digitalWrite(IN1, forward ? HIGH : LOW);
-  digitalWrite(IN2, forward ? LOW : HIGH);
+  bool physicalForward = MOTOR_A_INVERTED ? !forward : forward;
+  digitalWrite(IN1, physicalForward ? HIGH : LOW);
+  digitalWrite(IN2, physicalForward ? LOW : HIGH);
   analogWrite(ENA, speedValue);
 }
 
 void setMotorB(bool forward, int speedValue) {
-  digitalWrite(IN3, forward ? LOW : HIGH);
-  digitalWrite(IN4, forward ? HIGH : LOW);
+  bool physicalForward = MOTOR_B_INVERTED ? !forward : forward;
+  digitalWrite(IN3, physicalForward ? HIGH : LOW);
+  digitalWrite(IN4, physicalForward ? LOW : HIGH);
   analogWrite(ENB, speedValue);
 }
