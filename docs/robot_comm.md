@@ -173,7 +173,7 @@ Passos:
 - validar `pyserial`
 - descobrir modo e porta
 - abrir a `serial.Serial`
-- resetar buffers
+- resetar buffers apenas no modo serial USB
 - registrar a porta como reservada
 - iniciar a thread de leitura
 
@@ -193,6 +193,8 @@ Se ocorrer erro de escrita:
 - loga o erro
 - desconecta o robo
 - retorna `False`
+
+Na implementacao atual, o envio tambem registra um log curto com a linha enviada, o que ajuda a diagnosticar transporte USB ou RFCOMM.
 
 ### `_serial_read_loop()`
 

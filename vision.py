@@ -10,6 +10,7 @@ import mediapipe as mp
 
 from config import (
     ARUCO_MARKER_ID,
+    CAMERA_BUFFER_SIZE,
     CAMERA_INDEX,
     CAMERA_FRAME_HEIGHT,
     CAMERA_FRAME_WIDTH,
@@ -23,6 +24,7 @@ from config import (
     PRAYER_WRIST_DISTANCE_RATIO,
     TRACKING_CONFIDENCE,
     VISION_PERF_LOG,
+    VISION_PERF_LOG_EVERY,
 )
 
 
@@ -262,6 +264,7 @@ class GestureClassifier:
 class VisionSystem:
     def __init__(self) -> None:
         self._camera = cv2.VideoCapture(CAMERA_INDEX)
+        self._camera.set(cv2.CAP_PROP_BUFFERSIZE, CAMERA_BUFFER_SIZE)
         self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_FRAME_WIDTH)
         self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_FRAME_HEIGHT)
         hands_api = _resolve_hands_api()
@@ -288,6 +291,7 @@ class VisionSystem:
         self._aruco_detector = self._build_aruco_detector()
         self._debug_frame_counter = 0
         self._last_debug_message = ""
+        self._perf_frame_counter = 0
         self._warm_up_camera()
 
     def read_inputs(
@@ -301,23 +305,33 @@ class VisionSystem:
             return VisionInputs(gesture=None, marker_detected=False)
 
         started_at = time.monotonic()
+        capture_started_at = started_at
         success, frame = self._camera.read()
         if not success:
             return VisionInputs(gesture=None, marker_detected=False)
+        capture_elapsed = time.monotonic() - capture_started_at
 
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        rgb_frame.flags.writeable = False
         hands_result = None
         pose_result = None
+        hands_elapsed = 0.0
+        pose_elapsed = 0.0
+        marker_elapsed = 0.0
 
         should_run_pose = prioritize_prayer_hands or expected_gesture is GestureName.PRAYER_HANDS
         should_run_hands = expected_gesture is not GestureName.PRAYER_HANDS or allow_double_closed_fist
 
         if should_run_hands:
             hands_runner = self._hands_double if allow_double_closed_fist else self._hands_single
+            hands_started_at = time.monotonic()
             hands_result = hands_runner.process(rgb_frame)
+            hands_elapsed = time.monotonic() - hands_started_at
 
         if should_run_pose:
+            pose_started_at = time.monotonic()
             pose_result = self._pose.process(rgb_frame)
+            pose_elapsed = time.monotonic() - pose_started_at
 
         gesture = self._detect_gesture(
             hands_result,
@@ -328,7 +342,12 @@ class VisionSystem:
             expected_gesture,
             allow_double_closed_fist,
         )
-        marker_detected = self._detect_marker(frame) if detect_marker else False
+        if detect_marker:
+            marker_started_at = time.monotonic()
+            marker_detected = self._detect_marker(frame)
+            marker_elapsed = time.monotonic() - marker_started_at
+        else:
+            marker_detected = False
         self._debug_detection(
             hands_result,
             frame.shape[1],
@@ -336,6 +355,10 @@ class VisionSystem:
             gesture,
             prioritize_prayer_hands,
             time.monotonic() - started_at,
+            capture_elapsed,
+            hands_elapsed,
+            pose_elapsed,
+            marker_elapsed,
         )
         return VisionInputs(gesture=gesture, marker_detected=marker_detected)
 
@@ -465,12 +488,16 @@ class VisionSystem:
         gesture: Optional[GestureName],
         prioritize_prayer_hands: bool,
         elapsed_seconds: float,
+        capture_elapsed: float,
+        hands_elapsed: float,
+        pose_elapsed: float,
+        marker_elapsed: float,
     ) -> None:
         if not VISION_PERF_LOG:
             return
 
         self._debug_frame_counter += 1
-        if self._debug_frame_counter % 12 != 0:
+        if self._debug_frame_counter % VISION_PERF_LOG_EVERY != 0:
             return
 
         hand_landmarks_list = [] if hands_result is None or not hands_result.multi_hand_landmarks else hands_result.multi_hand_landmarks
@@ -486,6 +513,10 @@ class VisionSystem:
                 f"hands={hand_count} "
                 f"prayer_priority={'ON' if prioritize_prayer_hands else 'OFF'} "
                 f"dt_ms={elapsed_seconds * 1000:.1f} "
+                f"capture_ms={capture_elapsed * 1000:.1f} "
+                f"hands_ms={hands_elapsed * 1000:.1f} "
+                f"pose_ms={pose_elapsed * 1000:.1f} "
+                f"marker_ms={marker_elapsed * 1000:.1f} "
                 f"gesture={gesture.value if gesture else 'NONE'} "
                 f"fingers=("
                 f"T:{int(finger_state.thumb_open)} "
@@ -500,6 +531,10 @@ class VisionSystem:
                 f"hands={hand_count} "
                 f"prayer_priority={'ON' if prioritize_prayer_hands else 'OFF'} "
                 f"dt_ms={elapsed_seconds * 1000:.1f} "
+                f"capture_ms={capture_elapsed * 1000:.1f} "
+                f"hands_ms={hands_elapsed * 1000:.1f} "
+                f"pose_ms={pose_elapsed * 1000:.1f} "
+                f"marker_ms={marker_elapsed * 1000:.1f} "
                 f"gesture={gesture.value if gesture else 'NONE'}"
             )
 
