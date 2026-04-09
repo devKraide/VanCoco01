@@ -76,13 +76,17 @@ void emitLine(const char* message);
 
 void setup() {
   Serial.begin(115200);
+  Serial.println("BOOT_1");
 #if COCOMAG_BT_AVAILABLE
   bluetoothReady = SerialBT.begin("COCOMAG");
-  Serial.println(bluetoothReady ? "COCOMAG_BT_READY" : "COCOMAG_BT_FAILED");
+  Serial.println(bluetoothReady ? "BT_BEGIN_OK" : "BT_BEGIN_FAILED");
+  delay(250);
 #else
-  Serial.println("COCOMAG_BT_UNAVAILABLE");
+  Serial.println("BT_UNAVAILABLE");
 #endif
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+  Wire.setTimeOut(50);
+  Serial.println("WIRE_BEGIN_OK");
 
   pinMode(ENA, OUTPUT);
   pinMode(IN1, OUTPUT);
@@ -95,7 +99,10 @@ void setup() {
   actionServo.setPeriodHertz(50);
   actionServo.attach(SERVO_PIN, 500, 2400);
   actionServo.write(SERVO_REST_ANGLE);
+  Serial.println("SERVO_INIT_OK");
   mpuReady = initializeMpu();
+  Serial.println(mpuReady ? "MPU_INIT_OK" : "MPU_INIT_FAILED");
+  Serial.println("SETUP_DONE");
 }
 
 void loop() {
