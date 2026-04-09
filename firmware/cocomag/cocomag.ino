@@ -49,6 +49,7 @@ String serialBuffer;
 String bluetoothBuffer;
 bool isPresenting = false;
 bool mpuReady = false;
+bool bluetoothReady = false;
 float gyroZBiasDps = 0.0f;
 Servo actionServo;
 MPU6050 mpu;
@@ -76,7 +77,8 @@ void emitLine(const char* message);
 void setup() {
   Serial.begin(115200);
 #if COCOMAG_BT_AVAILABLE
-  SerialBT.begin("COCOMAG");
+  bluetoothReady = SerialBT.begin("COCOMAG");
+  Serial.println(bluetoothReady ? "COCOMAG_BT_READY" : "COCOMAG_BT_FAILED");
 #else
   Serial.println("COCOMAG_BT_UNAVAILABLE");
 #endif
@@ -99,7 +101,9 @@ void setup() {
 void loop() {
   readCommandStream(Serial, serialBuffer);
 #if COCOMAG_BT_AVAILABLE
-  readCommandStream(SerialBT, bluetoothBuffer);
+  if (bluetoothReady) {
+    readCommandStream(SerialBT, bluetoothBuffer);
+  }
 #endif
 }
 
@@ -110,6 +114,9 @@ void handleCommand(const String& command) {
   if (normalized.isEmpty()) {
     return;
   }
+
+  Serial.print("COCOMAG_CMD=");
+  Serial.println(normalized);
 
   if (isPresenting) {
     return;
@@ -275,18 +282,6 @@ bool rotateDegrees(float targetDegrees) {
       Serial.print(accumulatedDegrees, 1);
       Serial.print(" TARGET=");
       Serial.println(targetDegrees, 1);
-#if COCOMAG_BT_AVAILABLE
-      if (SerialBT.hasClient()) {
-        SerialBT.print("COCOMAG_MPU_Z_DPS=");
-        SerialBT.print(gyroZDps, 1);
-        SerialBT.print(" DT_MS=");
-        SerialBT.print(deltaSeconds * 1000.0f, 1);
-        SerialBT.print(" ANGLE=");
-        SerialBT.print(accumulatedDegrees, 1);
-        SerialBT.print(" TARGET=");
-        SerialBT.println(targetDegrees, 1);
-      }
-#endif
     }
 
     if (millis() - startedAt > ROTATION_TIMEOUT_MS) {
@@ -328,7 +323,7 @@ void readCommandStream(Stream& stream, String& buffer) {
 void emitLine(const char* message) {
   Serial.println(message);
 #if COCOMAG_BT_AVAILABLE
-  if (SerialBT.hasClient()) {
+  if (bluetoothReady && SerialBT.hasClient()) {
     SerialBT.println(message);
   }
 #endif
