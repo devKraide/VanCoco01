@@ -41,6 +41,7 @@ constexpr float PRESENT_TARGET_DEGREES = 360.0f;
 constexpr unsigned long ROTATION_TIMEOUT_MS = 6000;
 constexpr unsigned long GYRO_CALIBRATION_SAMPLES = 120;
 constexpr unsigned long GYRO_SAMPLE_DELAY_MS = 5;
+constexpr float GYRO_NOISE_FLOOR_DPS = 2.0f;
 
 String serialBuffer;
 String bluetoothBuffer;
@@ -132,11 +133,7 @@ void runPresentation() {
   stopMotors();
   delay(STOP_MS);
 
-  if (!rotateDegrees(PRESENT_TARGET_DEGREES)) {
-    turnRight();
-    delay(TURN_MS);
-    stopMotors();
-  }
+  rotateDegrees(PRESENT_TARGET_DEGREES);
 
   stopMotors();
   delay(STOP_MS);
@@ -183,6 +180,7 @@ void swingServoBetweenExtremes(unsigned int cycles) {
 
 bool initializeMpu() {
   mpu.initialize();
+  mpu.setFullScaleGyroRange(MPU6050_GYRO_FS_250);
   if (!mpu.testConnection()) {
     emitLine("COCOMAG_MPU_NOT_FOUND");
     return false;
@@ -210,6 +208,14 @@ bool calibrateGyroBias() {
 
 bool rotateDegrees(float targetDegrees) {
   if (!mpuReady) {
+    emitLine("COCOMAG_MPU_UNAVAILABLE");
+    return false;
+  }
+
+  stopMotors();
+  delay(STOP_MS);
+  if (!calibrateGyroBias()) {
+    emitLine("COCOMAG_MPU_RECALIBRATION_FAILED");
     return false;
   }
 
@@ -224,8 +230,8 @@ bool rotateDegrees(float targetDegrees) {
     lastSampleAt = nowMicros;
 
     float gyroZDps = (mpu.getRotationZ() / GYRO_Z_LSB_PER_DPS) - gyroZBiasDps;
-    float deltaDegrees = fabsf(gyroZDps) * deltaSeconds;
-    if (deltaDegrees > 0.02f) {
+    if (fabsf(gyroZDps) >= GYRO_NOISE_FLOOR_DPS) {
+      float deltaDegrees = fabsf(gyroZDps) * deltaSeconds;
       accumulatedDegrees += deltaDegrees;
     }
 
@@ -239,6 +245,14 @@ bool rotateDegrees(float targetDegrees) {
   }
 
   stopMotors();
+  Serial.print("COCOMAG_MPU_ROTATION_DEGREES=");
+  Serial.println(accumulatedDegrees, 1);
+#if COCOMAG_BT_AVAILABLE
+  if (SerialBT.hasClient()) {
+    SerialBT.print("COCOMAG_MPU_ROTATION_DEGREES=");
+    SerialBT.println(accumulatedDegrees, 1);
+  }
+#endif
   return true;
 }
 
