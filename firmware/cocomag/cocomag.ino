@@ -38,7 +38,7 @@ constexpr unsigned long SERVO_SWING_HOLD_MS = 450;
 constexpr unsigned long SERVO_HOLD_MS = 700;
 constexpr float GYRO_Z_LSB_PER_DPS = 131.0f;
 constexpr float PRESENT_TARGET_DEGREES = 360.0f;
-constexpr float GYRO_ANGLE_CORRECTION = 1.33f;
+constexpr float GYRO_ANGLE_SCALE = 0.75f;
 constexpr unsigned long ROTATION_TIMEOUT_MS = 6000;
 constexpr unsigned long GYRO_CALIBRATION_SAMPLES = 120;
 constexpr unsigned long GYRO_SAMPLE_DELAY_MS = 5;
@@ -234,7 +234,7 @@ bool rotateDegrees(float targetDegrees) {
 
     float gyroZDps = (mpu.getRotationZ() / GYRO_Z_LSB_PER_DPS) - gyroZBiasDps;
     if (fabsf(gyroZDps) >= GYRO_NOISE_FLOOR_DPS) {
-      float deltaDegrees = fabsf(gyroZDps) * deltaSeconds * GYRO_ANGLE_CORRECTION;
+      float deltaDegrees = fabsf(gyroZDps) * deltaSeconds * GYRO_ANGLE_SCALE;
       accumulatedDegrees += deltaDegrees;
     }
 
@@ -242,14 +242,22 @@ bool rotateDegrees(float targetDegrees) {
       lastDebugLogAt = millis();
       Serial.print("COCOMAG_MPU_Z_DPS=");
       Serial.print(gyroZDps, 1);
+      Serial.print(" DT_MS=");
+      Serial.print(deltaSeconds * 1000.0f, 1);
       Serial.print(" ANGLE=");
-      Serial.println(accumulatedDegrees, 1);
+      Serial.print(accumulatedDegrees, 1);
+      Serial.print(" TARGET=");
+      Serial.println(targetDegrees, 1);
 #if COCOMAG_BT_AVAILABLE
       if (SerialBT.hasClient()) {
         SerialBT.print("COCOMAG_MPU_Z_DPS=");
         SerialBT.print(gyroZDps, 1);
+        SerialBT.print(" DT_MS=");
+        SerialBT.print(deltaSeconds * 1000.0f, 1);
         SerialBT.print(" ANGLE=");
-        SerialBT.println(accumulatedDegrees, 1);
+        SerialBT.print(accumulatedDegrees, 1);
+        SerialBT.print(" TARGET=");
+        SerialBT.println(targetDegrees, 1);
       }
 #endif
     }
