@@ -34,7 +34,7 @@ constexpr int SERVO_LEFT_ANGLE = 20;
 constexpr int SERVO_RIGHT_ANGLE = 160;
 constexpr unsigned long ACTION_FORWARD_MS = 3000;
 constexpr unsigned long ACTION_BACKWARD_MS = 3000;
-constexpr unsigned long SERVO_SWING_HOLD_MS = 450;
+constexpr unsigned long SERVO_SWING_DURATION_MS = 3000;
 constexpr unsigned long SERVO_HOLD_MS = 700;
 constexpr float GYRO_Z_LSB_PER_DPS = 131.0f;
 constexpr float PRESENT_TARGET_DEGREES = 360.0f;
@@ -65,6 +65,7 @@ void stopMotors();
 void runPresentation();
 void runAction();
 void swingServoBetweenExtremes(unsigned int cycles);
+void moveServoSmooth(int startAngle, int endAngle, unsigned long durationMs);
 bool initializeMpu();
 bool calibrateGyroBias();
 bool rotateDegrees(float targetDegrees);
@@ -171,12 +172,38 @@ void runAction() {
 }
 
 void swingServoBetweenExtremes(unsigned int cycles) {
+  int currentAngle = SERVO_REST_ANGLE;
   for (unsigned int cycle = 0; cycle < cycles; ++cycle) {
-    actionServo.write(SERVO_LEFT_ANGLE);
-    delay(SERVO_SWING_HOLD_MS);
+    moveServoSmooth(currentAngle, SERVO_LEFT_ANGLE, SERVO_SWING_DURATION_MS);
+    currentAngle = SERVO_LEFT_ANGLE;
 
-    actionServo.write(SERVO_RIGHT_ANGLE);
-    delay(SERVO_SWING_HOLD_MS);
+    moveServoSmooth(currentAngle, SERVO_RIGHT_ANGLE, SERVO_SWING_DURATION_MS);
+    currentAngle = SERVO_RIGHT_ANGLE;
+  }
+}
+
+void moveServoSmooth(int startAngle, int endAngle, unsigned long durationMs) {
+  if (startAngle == endAngle) {
+    actionServo.write(endAngle);
+    return;
+  }
+
+  int step = endAngle > startAngle ? 1 : -1;
+  int totalSteps = abs(endAngle - startAngle);
+  unsigned long stepDelayMs = max(1UL, durationMs / static_cast<unsigned long>(totalSteps));
+  unsigned long startedAt = millis();
+  int currentAngle = startAngle;
+
+  actionServo.write(currentAngle);
+  while (currentAngle != endAngle) {
+    currentAngle += step;
+    actionServo.write(currentAngle);
+    delay(stepDelayMs);
+  }
+
+  unsigned long elapsedMs = millis() - startedAt;
+  if (elapsedMs < durationMs) {
+    delay(durationMs - elapsedMs);
   }
 }
 
