@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <BluetoothSerial.h>
 #include <ESP32Servo.h>
+#include <Wire.h>
+#include <MPU6050.h>
 
 #if defined(CONFIG_BT_ENABLED) && defined(CONFIG_BLUEDROID_ENABLED)
 #define COCOMAG_BT_AVAILABLE 1
@@ -15,20 +17,36 @@ constexpr int ENB = 25;
 constexpr int IN3 = 26;
 constexpr int IN4 = 27;
 constexpr int SERVO_PIN = 13;
+constexpr int I2C_SDA_PIN = 21;
+constexpr int I2C_SCL_PIN = 22;
 
 constexpr int MOTOR_SPEED = 180;
 constexpr unsigned long FORWARD_MS = 900;
 constexpr unsigned long TURN_MS = 700;
 constexpr unsigned long BACKWARD_MS = 800;
 constexpr unsigned long STOP_MS = 250;
+constexpr unsigned long PRESENT_FORWARD_MS = 2000;
+constexpr unsigned long PRESENT_BACKWARD_MS = 2000;
 constexpr int SERVO_REST_ANGLE = 0;
-constexpr int SERVO_ACTION_ANGLE = 90;
+constexpr int SERVO_LEFT_ANGLE = 20;
+constexpr int SERVO_RIGHT_ANGLE = 160;
+constexpr unsigned long ACTION_FORWARD_MS = 3000;
+constexpr unsigned long ACTION_BACKWARD_MS = 3000;
+constexpr unsigned long SERVO_SWING_HOLD_MS = 450;
 constexpr unsigned long SERVO_HOLD_MS = 700;
+constexpr float GYRO_Z_LSB_PER_DPS = 131.0f;
+constexpr float PRESENT_TARGET_DEGREES = 360.0f;
+constexpr unsigned long ROTATION_TIMEOUT_MS = 6000;
+constexpr unsigned long GYRO_CALIBRATION_SAMPLES = 120;
+constexpr unsigned long GYRO_SAMPLE_DELAY_MS = 5;
 
 String serialBuffer;
 String bluetoothBuffer;
 bool isPresenting = false;
+bool mpuReady = false;
+float gyroZBiasDps = 0.0f;
 Servo actionServo;
+MPU6050 mpu;
 #if COCOMAG_BT_AVAILABLE
 BluetoothSerial SerialBT;
 #endif
@@ -41,6 +59,10 @@ void turnRight();
 void stopMotors();
 void runPresentation();
 void runAction();
+void swingServoBetweenExtremes(unsigned int cycles);
+bool initializeMpu();
+bool calibrateGyroBias();
+bool rotateDegrees(float targetDegrees);
 void handleCommand(const String& command);
 void readCommandStream(Stream& stream, String& buffer);
 void emitLine(const char* message);
@@ -52,6 +74,7 @@ void setup() {
 #else
   Serial.println("COCOMAG_BT_UNAVAILABLE");
 #endif
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
   pinMode(ENA, OUTPUT);
   pinMode(IN1, OUTPUT);
@@ -64,6 +87,7 @@ void setup() {
   actionServo.setPeriodHertz(50);
   actionServo.attach(SERVO_PIN, 500, 2400);
   actionServo.write(SERVO_REST_ANGLE);
+  mpuReady = initializeMpu();
 }
 
 void loop() {
@@ -101,19 +125,22 @@ void handleCommand(const String& command) {
 
 void runPresentation() {
   moveForward();
-  delay(FORWARD_MS);
+  delay(PRESENT_FORWARD_MS);
 
   stopMotors();
   delay(STOP_MS);
 
-  turnRight();
-  delay(TURN_MS);
+  if (!rotateDegrees(PRESENT_TARGET_DEGREES)) {
+    turnRight();
+    delay(TURN_MS);
+    stopMotors();
+  }
 
   stopMotors();
   delay(STOP_MS);
 
   moveBackward();
-  delay(BACKWARD_MS);
+  delay(PRESENT_BACKWARD_MS);
 
   stopMotors();
   delay(STOP_MS);
@@ -123,18 +150,94 @@ void runPresentation() {
 
 void runAction() {
   moveForward();
-  delay(FORWARD_MS);
+  delay(ACTION_FORWARD_MS);
 
   stopMotors();
   delay(STOP_MS);
 
-  actionServo.write(SERVO_ACTION_ANGLE);
-  delay(SERVO_HOLD_MS);
+  swingServoBetweenExtremes(2);
 
   actionServo.write(SERVO_REST_ANGLE);
   delay(STOP_MS);
 
+  moveBackward();
+  delay(ACTION_BACKWARD_MS);
+
+  stopMotors();
+  delay(STOP_MS);
+
   emitLine("COCOMAG_DONE");
+}
+
+void swingServoBetweenExtremes(unsigned int cycles) {
+  for (unsigned int cycle = 0; cycle < cycles; ++cycle) {
+    actionServo.write(SERVO_LEFT_ANGLE);
+    delay(SERVO_SWING_HOLD_MS);
+
+    actionServo.write(SERVO_RIGHT_ANGLE);
+    delay(SERVO_SWING_HOLD_MS);
+  }
+}
+
+bool initializeMpu() {
+  mpu.initialize();
+  if (!mpu.testConnection()) {
+    emitLine("COCOMAG_MPU_NOT_FOUND");
+    return false;
+  }
+
+  if (!calibrateGyroBias()) {
+    emitLine("COCOMAG_MPU_CALIBRATION_FAILED");
+    return false;
+  }
+
+  emitLine("COCOMAG_MPU_READY");
+  return true;
+}
+
+bool calibrateGyroBias() {
+  long accumulatedZ = 0;
+  for (unsigned long index = 0; index < GYRO_CALIBRATION_SAMPLES; ++index) {
+    accumulatedZ += mpu.getRotationZ();
+    delay(GYRO_SAMPLE_DELAY_MS);
+  }
+
+  gyroZBiasDps = (accumulatedZ / static_cast<float>(GYRO_CALIBRATION_SAMPLES)) / GYRO_Z_LSB_PER_DPS;
+  return true;
+}
+
+bool rotateDegrees(float targetDegrees) {
+  if (!mpuReady) {
+    return false;
+  }
+
+  unsigned long startedAt = millis();
+  unsigned long lastSampleAt = micros();
+  float accumulatedDegrees = 0.0f;
+
+  turnRight();
+  while (accumulatedDegrees < targetDegrees) {
+    unsigned long nowMicros = micros();
+    float deltaSeconds = (nowMicros - lastSampleAt) / 1000000.0f;
+    lastSampleAt = nowMicros;
+
+    float gyroZDps = (mpu.getRotationZ() / GYRO_Z_LSB_PER_DPS) - gyroZBiasDps;
+    float deltaDegrees = fabsf(gyroZDps) * deltaSeconds;
+    if (deltaDegrees > 0.02f) {
+      accumulatedDegrees += deltaDegrees;
+    }
+
+    if (millis() - startedAt > ROTATION_TIMEOUT_MS) {
+      stopMotors();
+      emitLine("COCOMAG_MPU_ROTATION_TIMEOUT");
+      return false;
+    }
+
+    delay(2);
+  }
+
+  stopMotors();
+  return true;
 }
 
 void readCommandStream(Stream& stream, String& buffer) {
