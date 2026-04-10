@@ -23,7 +23,7 @@ constexpr bool MOTOR_A_INVERTED = false;
 constexpr bool MOTOR_B_INVERTED = true;
 
 constexpr int MOVE_SPEED = 220;
-constexpr int TURN_SPEED = 255;
+constexpr int TURN_SPEED = 210;
 constexpr int RAMP_START_SPEED = 140;
 constexpr int RAMP_STEP_COUNT = 4;
 constexpr unsigned long RAMP_STEP_DELAY_MS = 25;

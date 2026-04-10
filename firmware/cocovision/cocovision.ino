@@ -23,7 +23,7 @@ constexpr int ENB = 25;
 constexpr int IN3 = 26;
 constexpr int IN4 = 27;
 constexpr int MOVE_SPEED = 220;
-constexpr int TURN_SPEED = 255;
+constexpr int TURN_SPEED = 210;
 constexpr int RAMP_START_SPEED = 140;
 constexpr int RAMP_STEP_COUNT = 4;
 constexpr unsigned long RAMP_STEP_DELAY_MS = 25;
@@ -104,6 +104,7 @@ void setup() {
       delay(1000);
     }
   }
+  Serial.println("TCS34725_READY");
 
   mpuReady = initializeMpu();
 }
@@ -141,7 +142,11 @@ void handleCommand(const String& command) {
     return;
   }
 
+  Serial.print("COCOVISION_CMD=");
+  Serial.println(normalized);
+
   if (normalized == "COCOVISION:PRESENT") {
+    Serial.println("COCOVISION_RUN_PRESENT");
     isPresenting = true;
     runPresentation();
     isPresenting = false;
@@ -149,6 +154,7 @@ void handleCommand(const String& command) {
   }
 
   if (normalized == "COCOVISION:ACTION") {
+    Serial.println("COCOVISION_RUN_ACTION");
     isPresenting = true;
     runAction();
     isPresenting = false;
@@ -156,6 +162,7 @@ void handleCommand(const String& command) {
   }
 
   if (normalized == "COCOVISION:RETURN") {
+    Serial.println("COCOVISION_RUN_RETURN");
     isPresenting = true;
     runReturn();
     isPresenting = false;
@@ -210,11 +217,7 @@ void runPresentation() {
   softStopDrive(true, true, MOVE_SPEED);
   delay(STOP_MS);
 
-  if (!rotateDegrees(PRESENT_TARGET_DEGREES)) {
-    turnRight();
-    delay(TURN_MS);
-    softStopDrive(true, false, TURN_SPEED);
-  }
+  rotateDegrees(PRESENT_TARGET_DEGREES);
   delay(STOP_MS);
 
   moveBackward();
