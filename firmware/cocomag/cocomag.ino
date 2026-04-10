@@ -22,7 +22,12 @@ constexpr int I2C_SCL_PIN = 22;
 constexpr bool MOTOR_A_INVERTED = false;
 constexpr bool MOTOR_B_INVERTED = true;
 
-constexpr int MOTOR_SPEED = 180;
+constexpr int MOVE_SPEED = 220;
+constexpr int TURN_SPEED = 255;
+constexpr int RAMP_START_SPEED = 140;
+constexpr int RAMP_STEP_COUNT = 4;
+constexpr unsigned long RAMP_STEP_DELAY_MS = 25;
+constexpr unsigned long SOFT_STOP_STEP_DELAY_MS = 20;
 constexpr unsigned long FORWARD_MS = 900;
 constexpr unsigned long TURN_MS = 700;
 constexpr unsigned long BACKWARD_MS = 800;
@@ -59,6 +64,9 @@ BluetoothSerial SerialBT;
 
 void setMotorA(bool forward, int speedValue);
 void setMotorB(bool forward, int speedValue);
+void applyDrive(bool motorAForward, int motorASpeed, bool motorBForward, int motorBSpeed);
+void rampDrive(bool motorAForward, bool motorBForward, int targetSpeed);
+void softStopDrive(bool motorAForward, bool motorBForward, int currentSpeed);
 void moveForward();
 void moveBackward();
 void turnRight();
@@ -147,18 +155,18 @@ void runPresentation() {
   moveForward();
   delay(PRESENT_FORWARD_MS);
 
-  stopMotors();
+  softStopDrive(true, true, MOVE_SPEED);
   delay(STOP_MS);
 
   rotateDegrees(PRESENT_TARGET_DEGREES);
 
-  stopMotors();
+  softStopDrive(true, false, TURN_SPEED);
   delay(STOP_MS);
 
   moveBackward();
   delay(PRESENT_BACKWARD_MS);
 
-  stopMotors();
+  softStopDrive(false, false, MOVE_SPEED);
   delay(STOP_MS);
 
   emitLine("COCOMAG_DONE");
@@ -168,7 +176,7 @@ void runAction() {
   moveForward();
   delay(ACTION_FORWARD_MS);
 
-  stopMotors();
+  softStopDrive(true, true, MOVE_SPEED);
   delay(STOP_MS);
 
   swingServoBetweenExtremes(2);
@@ -179,7 +187,7 @@ void runAction() {
   moveBackward();
   delay(ACTION_BACKWARD_MS);
 
-  stopMotors();
+  softStopDrive(false, false, MOVE_SPEED);
   delay(STOP_MS);
 
   emitLine("COCOMAG_DONE");
@@ -292,7 +300,7 @@ bool rotateDegrees(float targetDegrees) {
     }
 
     if (millis() - startedAt > ROTATION_TIMEOUT_MS) {
-      stopMotors();
+      softStopDrive(true, false, TURN_SPEED);
       emitLine("COCOMAG_MPU_ROTATION_TIMEOUT");
       return false;
     }
@@ -300,7 +308,7 @@ bool rotateDegrees(float targetDegrees) {
     delay(2);
   }
 
-  stopMotors();
+  softStopDrive(true, false, TURN_SPEED);
   Serial.print("COCOMAG_MPU_ROTATION_DEGREES=");
   Serial.println(accumulatedDegrees, 1);
 #if COCOMAG_BT_AVAILABLE
@@ -337,18 +345,15 @@ void emitLine(const char* message) {
 }
 
 void moveForward() {
-  setMotorA(true, MOTOR_SPEED);
-  setMotorB(true, MOTOR_SPEED);
+  rampDrive(true, true, MOVE_SPEED);
 }
 
 void moveBackward() {
-  setMotorA(false, MOTOR_SPEED);
-  setMotorB(false, MOTOR_SPEED);
+  rampDrive(false, false, MOVE_SPEED);
 }
 
 void turnRight() {
-  setMotorA(true, MOTOR_SPEED);
-  setMotorB(false, MOTOR_SPEED);
+  rampDrive(true, false, TURN_SPEED);
 }
 
 void stopMotors() {
@@ -358,6 +363,30 @@ void stopMotors() {
   digitalWrite(IN2, LOW);
   digitalWrite(IN3, LOW);
   digitalWrite(IN4, LOW);
+}
+
+void applyDrive(bool motorAForward, int motorASpeed, bool motorBForward, int motorBSpeed) {
+  setMotorA(motorAForward, motorASpeed);
+  setMotorB(motorBForward, motorBSpeed);
+}
+
+void rampDrive(bool motorAForward, bool motorBForward, int targetSpeed) {
+  for (int step = 1; step <= RAMP_STEP_COUNT; ++step) {
+    int speedValue = RAMP_START_SPEED +
+        ((targetSpeed - RAMP_START_SPEED) * step) / RAMP_STEP_COUNT;
+    applyDrive(motorAForward, speedValue, motorBForward, speedValue);
+    delay(RAMP_STEP_DELAY_MS);
+  }
+}
+
+void softStopDrive(bool motorAForward, bool motorBForward, int currentSpeed) {
+  for (int step = RAMP_STEP_COUNT; step >= 1; --step) {
+    int speedValue = RAMP_START_SPEED +
+        ((currentSpeed - RAMP_START_SPEED) * step) / RAMP_STEP_COUNT;
+    applyDrive(motorAForward, speedValue, motorBForward, speedValue);
+    delay(SOFT_STOP_STEP_DELAY_MS);
+  }
+  stopMotors();
 }
 
 void setMotorA(bool forward, int speedValue) {
