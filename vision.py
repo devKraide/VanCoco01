@@ -311,8 +311,7 @@ class VisionSystem:
             return VisionInputs(gesture=None, marker_detected=False)
         capture_elapsed = time.monotonic() - capture_started_at
 
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        rgb_frame.flags.writeable = False
+        rgb_frame = None
         hands_result = None
         pose_result = None
         hands_elapsed = 0.0
@@ -320,7 +319,20 @@ class VisionSystem:
         marker_elapsed = 0.0
 
         should_run_pose = prioritize_prayer_hands or expected_gesture is GestureName.PRAYER_HANDS
-        should_run_hands = expected_gesture is not GestureName.PRAYER_HANDS or allow_double_closed_fist
+        should_run_hands = (
+            expected_gesture in {
+                GestureName.HAND_OPEN,
+                GestureName.POINT,
+                GestureName.V_SIGN,
+                GestureName.THUMB_UP,
+                GestureName.CLOSED_FIST,
+            }
+            or allow_double_closed_fist
+        )
+
+        if should_run_hands or should_run_pose:
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            rgb_frame.flags.writeable = False
 
         if should_run_hands:
             hands_runner = self._hands_double if allow_double_closed_fist else self._hands_single
