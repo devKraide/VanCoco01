@@ -27,6 +27,7 @@ from config import (
     VISION_READY_FRAMES,
     VISION_PERF_LOG,
     VISION_PERF_LOG_EVERY,
+    VISION_PROCESSING_SCALE,
 )
 
 
@@ -329,6 +330,7 @@ class VisionSystem:
         capture_elapsed = time.monotonic() - capture_started_at
 
         rgb_frame = None
+        processing_frame = frame
         hands_result = None
         pose_result = None
         hands_elapsed = 0.0
@@ -348,7 +350,15 @@ class VisionSystem:
         )
 
         if should_run_hands or should_run_pose:
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            if VISION_PROCESSING_SCALE != 1.0:
+                processing_frame = cv2.resize(
+                    frame,
+                    None,
+                    fx=VISION_PROCESSING_SCALE,
+                    fy=VISION_PROCESSING_SCALE,
+                    interpolation=cv2.INTER_LINEAR,
+                )
+            rgb_frame = cv2.cvtColor(processing_frame, cv2.COLOR_BGR2RGB)
             rgb_frame.flags.writeable = False
 
         if should_run_hands:
@@ -365,8 +375,8 @@ class VisionSystem:
         gesture = self._detect_gesture(
             hands_result,
             pose_result,
-            frame.shape[1],
-            frame.shape[0],
+            processing_frame.shape[1],
+            processing_frame.shape[0],
             prioritize_prayer_hands,
             expected_gesture,
             allow_double_closed_fist,
@@ -379,8 +389,8 @@ class VisionSystem:
             marker_detected = False
         self._debug_detection(
             hands_result,
-            frame.shape[1],
-            frame.shape[0],
+            processing_frame.shape[1],
+            processing_frame.shape[0],
             gesture,
             prioritize_prayer_hands,
             time.monotonic() - started_at,
@@ -412,7 +422,17 @@ class VisionSystem:
         if not success:
             return False
 
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        processing_frame = frame
+        if VISION_PROCESSING_SCALE != 1.0:
+            processing_frame = cv2.resize(
+                frame,
+                None,
+                fx=VISION_PROCESSING_SCALE,
+                fy=VISION_PROCESSING_SCALE,
+                interpolation=cv2.INTER_LINEAR,
+            )
+
+        rgb_frame = cv2.cvtColor(processing_frame, cv2.COLOR_BGR2RGB)
         rgb_frame.flags.writeable = False
         self._hands_single.process(rgb_frame)
         self._ready_frames += 1
