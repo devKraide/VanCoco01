@@ -34,8 +34,8 @@ constexpr unsigned long BACKWARD_MS = 800;
 constexpr unsigned long STOP_MS = 250;
 constexpr unsigned long PRESENT_FORWARD_MS = 2000;
 constexpr unsigned long PRESENT_BACKWARD_MS = 2000;
-constexpr int SERVO_REST_ANGLE = 0;
-constexpr int SERVO_PICKUP_ANGLE = 140;
+constexpr int SERVO_REST_ANGLE = 140;
+constexpr int SERVO_PICKUP_ANGLE = 20;
 constexpr unsigned long ACTION_FORWARD_MS = 3000;
 constexpr unsigned long ACTION_BACKWARD_MS = 3000;
 constexpr unsigned long SERVO_LOWER_DURATION_MS = 1800;
@@ -74,7 +74,6 @@ void stopMotors();
 void runPresentation();
 void runAction();
 void performPickupMotion();
-void moveServoSmooth(int startAngle, int endAngle, unsigned long durationMs);
 bool initializeMpu();
 bool calibrateGyroBias();
 bool rotateDegrees(float targetDegrees);
@@ -191,35 +190,10 @@ void runAction() {
 }
 
 void performPickupMotion() {
-  moveServoSmooth(SERVO_REST_ANGLE, SERVO_PICKUP_ANGLE, SERVO_LOWER_DURATION_MS);
+  actionServo.write(SERVO_PICKUP_ANGLE);
   delay(SERVO_PICKUP_HOLD_MS);
-  moveServoSmooth(SERVO_PICKUP_ANGLE, SERVO_REST_ANGLE, SERVO_RAISE_DURATION_MS);
+  actionServo.write(SERVO_REST_ANGLE);
   delay(STOP_MS);
-}
-
-void moveServoSmooth(int startAngle, int endAngle, unsigned long durationMs) {
-  if (startAngle == endAngle) {
-    actionServo.write(endAngle);
-    return;
-  }
-
-  int step = endAngle > startAngle ? 1 : -1;
-  int totalSteps = abs(endAngle - startAngle);
-  unsigned long stepDelayMs = max(1UL, durationMs / static_cast<unsigned long>(totalSteps));
-  unsigned long startedAt = millis();
-  int currentAngle = startAngle;
-
-  actionServo.write(currentAngle);
-  while (currentAngle != endAngle) {
-    currentAngle += step;
-    actionServo.write(currentAngle);
-    delay(stepDelayMs);
-  }
-
-  unsigned long elapsedMs = millis() - startedAt;
-  if (elapsedMs < durationMs) {
-    delay(durationMs - elapsedMs);
-  }
 }
 
 bool initializeMpu() {
