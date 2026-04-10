@@ -179,7 +179,14 @@ void runAction() {
   softStopDrive(true, true, MOVE_SPEED);
   delay(STOP_MS);
 
-  performPickupMotion();
+  // CALIBRACAO TEMPORARIA DO SERVO
+  // performPickupMotion();
+  actionServo.write(0);
+  delay(1000);
+  actionServo.write(90);
+  delay(1000);
+  actionServo.write(180);
+  delay(1000);
 
   moveBackward();
   delay(ACTION_BACKWARD_MS);
