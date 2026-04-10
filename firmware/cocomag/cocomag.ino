@@ -179,14 +179,7 @@ void runAction() {
   softStopDrive(true, true, MOVE_SPEED);
   delay(STOP_MS);
 
-  // CALIBRACAO TEMPORARIA DO SERVO
-  // performPickupMotion();
-  actionServo.write(0);
-  delay(1000);
-  actionServo.write(90);
-  delay(1000);
-  actionServo.write(180);
-  delay(1000);
+  performPickupMotion();
 
   moveBackward();
   delay(ACTION_BACKWARD_MS);
@@ -372,8 +365,7 @@ void applyDrive(bool motorAForward, int motorASpeed, bool motorBForward, int mot
 
 void rampDrive(bool motorAForward, bool motorBForward, int targetSpeed) {
   for (int step = 1; step <= RAMP_STEP_COUNT; ++step) {
-    int speedValue = RAMP_START_SPEED +
-        ((targetSpeed - RAMP_START_SPEED) * step) / RAMP_STEP_COUNT;
+    int speedValue = RAMP_START_SPEED + ((targetSpeed - RAMP_START_SPEED) * step) / RAMP_STEP_COUNT;
     applyDrive(motorAForward, speedValue, motorBForward, speedValue);
     delay(RAMP_STEP_DELAY_MS);
   }
@@ -381,8 +373,7 @@ void rampDrive(bool motorAForward, bool motorBForward, int targetSpeed) {
 
 void softStopDrive(bool motorAForward, bool motorBForward, int currentSpeed) {
   for (int step = RAMP_STEP_COUNT; step >= 1; --step) {
-    int speedValue = RAMP_START_SPEED +
-        ((currentSpeed - RAMP_START_SPEED) * step) / RAMP_STEP_COUNT;
+    int speedValue = RAMP_START_SPEED + ((currentSpeed - RAMP_START_SPEED) * step) / RAMP_STEP_COUNT;
     applyDrive(motorAForward, speedValue, motorBForward, speedValue);
     delay(SOFT_STOP_STEP_DELAY_MS);
   }
