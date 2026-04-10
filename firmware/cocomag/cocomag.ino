@@ -23,7 +23,7 @@ constexpr bool MOTOR_A_INVERTED = false;
 constexpr bool MOTOR_B_INVERTED = true;
 
 constexpr int MOVE_SPEED = 220;
-constexpr int TURN_SPEED = 210;
+constexpr int TURN_SPEED = 180;
 constexpr int RAMP_START_SPEED = 140;
 constexpr int RAMP_STEP_COUNT = 4;
 constexpr unsigned long RAMP_STEP_DELAY_MS = 25;
@@ -33,12 +33,13 @@ constexpr unsigned long TURN_MS = 700;
 constexpr unsigned long BACKWARD_MS = 800;
 constexpr unsigned long STOP_MS = 250;
 constexpr unsigned long PRESENT_FORWARD_MS = 2000;
-constexpr unsigned long PRESENT_BACKWARD_MS = 2000;
+constexpr unsigned long PRESENT_BACKWARD_MS = 1500;
 constexpr int SERVO_REST_ANGLE = 140;
 constexpr int SERVO_PICKUP_ANGLE = 0;
 constexpr int SERVO_PARTIAL_RETURN_ANGLE = 90;
 constexpr unsigned long ACTION_FORWARD_MS = 3000;
-constexpr unsigned long ACTION_BACKWARD_MS = 3000;
+constexpr float ACTION_TURN_DEGREES = 90.0f;
+constexpr unsigned long ACTION_POST_TURN_FORWARD_MS = 1000;
 constexpr unsigned long SERVO_LOWER_DURATION_MS = 1800;
 constexpr unsigned long SERVO_PICKUP_HOLD_MS = 1000;
 constexpr float GYRO_Z_LSB_PER_DPS = 131.0f;
@@ -178,12 +179,13 @@ void runAction() {
   softStopDrive(true, true, MOVE_SPEED);
   delay(STOP_MS);
 
-  performPickupMotion();
+  rotateDegrees(ACTION_TURN_DEGREES);
+  delay(STOP_MS);
 
-  moveBackward();
-  delay(ACTION_BACKWARD_MS);
+  moveForward();
+  delay(ACTION_POST_TURN_FORWARD_MS);
 
-  softStopDrive(false, false, MOVE_SPEED);
+  softStopDrive(true, true, MOVE_SPEED);
   delay(STOP_MS);
 
   emitLine("COCOMAG_DONE");
