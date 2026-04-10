@@ -74,7 +74,7 @@ VIDEO8_PATH = MEDIA_DIR / "video8.mp4"
 VIDEO9_SUCCESS_PATH = MEDIA_DIR / "video9a.mp4"
 VIDEO9_FAILURE_PATH = MEDIA_DIR / "video9b.mp4"
 COLOR_VIDEO_PATHS = {
-    "COLOR_BLUE": MEDIA_DIR / "video6_blue.mp4",
+    "COLOR_BLUE": MEDIA_DIR / "video6.mp4",
 }
 
 #if you want to change the final outcome -> FINAL_OUTCOME = "failure"
