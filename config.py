@@ -11,6 +11,7 @@ WINDOW_NAME = "VanCoco"
 
 
 class AppState(Enum):
+    WARMING_UP = "warming_up"
     IDLE_BLACK_SCREEN = "idle_black_screen"
     PLAYING_VIDEO = "playing_video"
     WAITING_PRESENTATION = "waiting_presentation"
@@ -96,6 +97,7 @@ KEY_ACTIONS = {
 EXIT_KEYS = {ord("q"), 27}
 CAMERA_INDEX = 2
 CAMERA_WARMUP_FRAMES = 5
+VISION_READY_FRAMES = 8
 CAMERA_FRAME_WIDTH = 640
 CAMERA_FRAME_HEIGHT = 360
 CAMERA_BUFFER_SIZE = 1

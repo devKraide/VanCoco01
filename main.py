@@ -33,6 +33,14 @@ class VanCocoApp:
                 self._media_controller.update_ui()
                 self._render_current_state()
                 key_code = self._media_controller.consume_key()
+
+                if key_code in EXIT_KEYS:
+                    break
+
+                if self._state_manager.state is AppState.WARMING_UP:
+                    self._handle_warming_up_state()
+                    continue
+
                 vision_request = self._build_vision_request()
                 if vision_request["enabled"]:
                     vision_inputs = self._vision_system.read_inputs(
@@ -43,9 +51,6 @@ class VanCocoApp:
                     )
                 else:
                     vision_inputs = VisionInputs(gesture=None, marker_detected=False)
-
-                if key_code in EXIT_KEYS:
-                    break
 
                 if self._state_manager.state is AppState.IDLE_BLACK_SCREEN:
                     self._handle_idle_state(key_code, vision_inputs)
@@ -99,6 +104,7 @@ class VanCocoApp:
 
     def _render_current_state(self) -> None:
         if self._state_manager.state in {
+            AppState.WARMING_UP,
             AppState.IDLE_BLACK_SCREEN,
             AppState.WAITING_COCOMAG_ACTION,
             AppState.WAITING_COCOMAG_ACTION_COMPLETION,
@@ -111,6 +117,13 @@ class VanCocoApp:
             AppState.WAITING_VIDEO9_TRIGGER,
         }:
             self._media_controller.show_black_screen()
+
+    def _handle_warming_up_state(self) -> None:
+        if not self._vision_system.poll_ready():
+            return
+
+        print("[Main] entering idle")
+        self._state_manager.finish_warmup()
 
     def _handle_idle_state(self, key_code: int, vision_inputs) -> None:
         gesture_result = self._story_engine.consume_trigger(

@@ -23,6 +23,7 @@ from config import (
     PRAYER_CHEST_HEIGHT_MIN_RATIO,
     PRAYER_WRIST_DISTANCE_RATIO,
     TRACKING_CONFIDENCE,
+    VISION_READY_FRAMES,
     VISION_PERF_LOG,
     VISION_PERF_LOG_EVERY,
 )
@@ -292,6 +293,8 @@ class VisionSystem:
         self._debug_frame_counter = 0
         self._last_debug_message = ""
         self._perf_frame_counter = 0
+        self._ready_frames = 0
+        self._is_ready = False
         self._warm_up_camera()
 
     def read_inputs(
@@ -383,6 +386,27 @@ class VisionSystem:
             expected_gesture=expected_gesture,
             prioritize_prayer_hands=prioritize_prayer_hands,
         ).gesture
+
+    def poll_ready(self) -> bool:
+        if self._is_ready:
+            return True
+
+        if not self._camera.isOpened():
+            return False
+
+        success, frame = self._camera.read()
+        if not success:
+            return False
+
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        rgb_frame.flags.writeable = False
+        self._hands_single.process(rgb_frame)
+        self._ready_frames += 1
+        if self._ready_frames >= VISION_READY_FRAMES:
+            self._is_ready = True
+            print("[Vision] ready")
+
+        return self._is_ready
 
     def _detect_gesture(
         self,
