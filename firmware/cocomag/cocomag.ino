@@ -35,12 +35,12 @@ constexpr unsigned long STOP_MS = 250;
 constexpr unsigned long PRESENT_FORWARD_MS = 2000;
 constexpr unsigned long PRESENT_BACKWARD_MS = 2000;
 constexpr int SERVO_REST_ANGLE = 0;
-constexpr int SERVO_LEFT_ANGLE = 20;
-constexpr int SERVO_RIGHT_ANGLE = 160;
+constexpr int SERVO_PICKUP_ANGLE = 110;
 constexpr unsigned long ACTION_FORWARD_MS = 3000;
 constexpr unsigned long ACTION_BACKWARD_MS = 3000;
-constexpr unsigned long SERVO_SWING_DURATION_MS = 3000;
-constexpr unsigned long SERVO_HOLD_MS = 700;
+constexpr unsigned long SERVO_LOWER_DURATION_MS = 1800;
+constexpr unsigned long SERVO_PICKUP_HOLD_MS = 600;
+constexpr unsigned long SERVO_RAISE_DURATION_MS = 1800;
 constexpr float GYRO_Z_LSB_PER_DPS = 131.0f;
 constexpr float PRESENT_TARGET_DEGREES = 360.0f;
 constexpr float GYRO_ANGLE_SCALE = 0.75f;
@@ -73,7 +73,7 @@ void turnRight();
 void stopMotors();
 void runPresentation();
 void runAction();
-void swingServoBetweenExtremes(unsigned int cycles);
+void performPickupMotion();
 void moveServoSmooth(int startAngle, int endAngle, unsigned long durationMs);
 bool initializeMpu();
 bool calibrateGyroBias();
@@ -179,10 +179,7 @@ void runAction() {
   softStopDrive(true, true, MOVE_SPEED);
   delay(STOP_MS);
 
-  swingServoBetweenExtremes(2);
-
-  actionServo.write(SERVO_REST_ANGLE);
-  delay(STOP_MS);
+  performPickupMotion();
 
   moveBackward();
   delay(ACTION_BACKWARD_MS);
@@ -193,15 +190,11 @@ void runAction() {
   emitLine("COCOMAG_DONE");
 }
 
-void swingServoBetweenExtremes(unsigned int cycles) {
-  int currentAngle = SERVO_REST_ANGLE;
-  for (unsigned int cycle = 0; cycle < cycles; ++cycle) {
-    moveServoSmooth(currentAngle, SERVO_LEFT_ANGLE, SERVO_SWING_DURATION_MS);
-    currentAngle = SERVO_LEFT_ANGLE;
-
-    moveServoSmooth(currentAngle, SERVO_RIGHT_ANGLE, SERVO_SWING_DURATION_MS);
-    currentAngle = SERVO_RIGHT_ANGLE;
-  }
+void performPickupMotion() {
+  moveServoSmooth(SERVO_REST_ANGLE, SERVO_PICKUP_ANGLE, SERVO_LOWER_DURATION_MS);
+  delay(SERVO_PICKUP_HOLD_MS);
+  moveServoSmooth(SERVO_PICKUP_ANGLE, SERVO_REST_ANGLE, SERVO_RAISE_DURATION_MS);
+  delay(STOP_MS);
 }
 
 void moveServoSmooth(int startAngle, int endAngle, unsigned long durationMs) {
