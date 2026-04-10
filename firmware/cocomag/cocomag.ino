@@ -36,11 +36,11 @@ constexpr unsigned long PRESENT_FORWARD_MS = 2000;
 constexpr unsigned long PRESENT_BACKWARD_MS = 2000;
 constexpr int SERVO_REST_ANGLE = 140;
 constexpr int SERVO_PICKUP_ANGLE = 20;
+constexpr int SERVO_PARTIAL_RETURN_ANGLE = 90;
 constexpr unsigned long ACTION_FORWARD_MS = 3000;
 constexpr unsigned long ACTION_BACKWARD_MS = 3000;
 constexpr unsigned long SERVO_LOWER_DURATION_MS = 1800;
-constexpr unsigned long SERVO_PICKUP_HOLD_MS = 600;
-constexpr unsigned long SERVO_RAISE_DURATION_MS = 1800;
+constexpr unsigned long SERVO_PICKUP_HOLD_MS = 1000;
 constexpr float GYRO_Z_LSB_PER_DPS = 131.0f;
 constexpr float PRESENT_TARGET_DEGREES = 360.0f;
 constexpr float GYRO_ANGLE_SCALE = 0.75f;
@@ -190,9 +190,11 @@ void runAction() {
 }
 
 void performPickupMotion() {
+  actionServo.write(SERVO_REST_ANGLE);
+  delay(STOP_MS);
   actionServo.write(SERVO_PICKUP_ANGLE);
   delay(SERVO_PICKUP_HOLD_MS);
-  actionServo.write(SERVO_REST_ANGLE);
+  actionServo.write(SERVO_PARTIAL_RETURN_ANGLE);
   delay(STOP_MS);
 }
 
