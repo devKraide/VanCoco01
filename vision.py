@@ -23,6 +23,7 @@ from config import (
     PRAYER_CHEST_HEIGHT_MIN_RATIO,
     PRAYER_WRIST_DISTANCE_RATIO,
     TRACKING_CONFIDENCE,
+    VISION_GESTURE_DEBUG,
     VISION_READY_FRAMES,
     VISION_PERF_LOG,
     VISION_PERF_LOG_EVERY,
@@ -86,37 +87,52 @@ class GestureClassifier:
         if not finger_state.is_complete:
             return None
 
+        candidates = self._candidate_matches(finger_state)
+
         if expected_gesture is GestureName.HAND_OPEN:
-            return GestureName.HAND_OPEN if self._is_hand_open(finger_state) else None
+            return GestureName.HAND_OPEN if candidates[GestureName.HAND_OPEN] else None
 
         if expected_gesture is GestureName.V_SIGN:
-            return GestureName.V_SIGN if self._is_v_sign(finger_state) else None
+            return GestureName.V_SIGN if candidates[GestureName.V_SIGN] else None
 
         if expected_gesture is GestureName.THUMB_UP:
-            return GestureName.THUMB_UP if self._is_thumb_up(finger_state) else None
+            return GestureName.THUMB_UP if candidates[GestureName.THUMB_UP] else None
 
         if expected_gesture is GestureName.POINT:
-            return GestureName.POINT if self._is_point(finger_state) else None
+            return GestureName.POINT if candidates[GestureName.POINT] else None
 
         if expected_gesture is GestureName.CLOSED_FIST:
-            return GestureName.CLOSED_FIST if self._is_closed_fist(finger_state) else None
+            return GestureName.CLOSED_FIST if candidates[GestureName.CLOSED_FIST] else None
 
-        if self._is_hand_open(finger_state):
-            return GestureName.HAND_OPEN
-
-        if self._is_v_sign(finger_state):
-            return GestureName.V_SIGN
-
-        if self._is_thumb_up(finger_state):
-            return GestureName.THUMB_UP
-
-        if self._is_point(finger_state):
-            return GestureName.POINT
-
-        if self._is_closed_fist(finger_state):
-            return GestureName.CLOSED_FIST
+        for gesture_name in (
+            GestureName.HAND_OPEN,
+            GestureName.V_SIGN,
+            GestureName.THUMB_UP,
+            GestureName.POINT,
+            GestureName.CLOSED_FIST,
+        ):
+            if candidates[gesture_name]:
+                return gesture_name
 
         return None
+
+    def describe_hand(
+        self,
+        hand_landmarks,
+        image_width: int,
+        image_height: int,
+    ) -> tuple[FingerState, dict[GestureName, bool]]:
+        finger_state = self._extract_finger_state(hand_landmarks, image_width, image_height)
+        return finger_state, self._candidate_matches(finger_state)
+
+    def _candidate_matches(self, finger_state: FingerState) -> dict[GestureName, bool]:
+        return {
+            GestureName.HAND_OPEN: self._is_hand_open(finger_state),
+            GestureName.V_SIGN: self._is_v_sign(finger_state),
+            GestureName.THUMB_UP: self._is_thumb_up(finger_state),
+            GestureName.POINT: self._is_point(finger_state),
+            GestureName.CLOSED_FIST: self._is_closed_fist(finger_state),
+        }
 
     def _extract_finger_state(self, hand_landmarks, image_width: int, image_height: int) -> FingerState:
         landmark = hand_landmarks.landmark
@@ -227,7 +243,6 @@ class GestureClassifier:
                 finger_state.is_complete,
                 finger_state.index_open,
                 finger_state.middle_open,
-                not finger_state.thumb_open,
                 not finger_state.thumb_up,
                 not finger_state.ring_open,
                 not finger_state.pinky_open,
@@ -252,7 +267,6 @@ class GestureClassifier:
         return all(
             (
                 finger_state.is_complete,
-                not finger_state.thumb_open,
                 not finger_state.index_open,
                 not finger_state.middle_open,
                 not finger_state.ring_open,
@@ -539,7 +553,7 @@ class VisionSystem:
         hand_landmarks_list = [] if hands_result is None or not hands_result.multi_hand_landmarks else hands_result.multi_hand_landmarks
         hand_count = len(hand_landmarks_list)
         if hand_landmarks_list:
-            finger_state = self._classifier._extract_finger_state(
+            finger_state, candidates = self._classifier.describe_hand(
                 hand_landmarks_list[0],
                 image_width,
                 image_height,
@@ -561,6 +575,12 @@ class VisionSystem:
                 f"R:{int(finger_state.ring_open)} "
                 f"P:{int(finger_state.pinky_open)})"
             )
+            if VISION_GESTURE_DEBUG:
+                candidate_text = ",".join(
+                    f"{gesture_name.value}:{int(is_match)}"
+                    for gesture_name, is_match in candidates.items()
+                )
+                message += f" candidates=({candidate_text})"
         else:
             message = (
                 "[Vision] "
