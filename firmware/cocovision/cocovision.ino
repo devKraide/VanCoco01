@@ -22,8 +22,10 @@ constexpr int IN2 = 19;
 constexpr int ENB = 25;
 constexpr int IN3 = 26;
 constexpr int IN4 = 27;
+constexpr bool MOTOR_A_INVERTED = false;
+constexpr bool MOTOR_B_INVERTED = true;
 constexpr int MOVE_SPEED = 220;
-constexpr int TURN_SPEED = 210;
+constexpr int TURN_SPEED = 180;
 constexpr int RAMP_START_SPEED = 140;
 constexpr int RAMP_STEP_COUNT = 4;
 constexpr unsigned long RAMP_STEP_DELAY_MS = 25;
@@ -33,12 +35,12 @@ constexpr unsigned long TURN_MS = 700;
 constexpr unsigned long BACKWARD_MS = 800;
 constexpr unsigned long STOP_MS = 250;
 constexpr unsigned long PRESENT_FORWARD_MS = 2000;
-constexpr unsigned long PRESENT_BACKWARD_MS = 2000;
+constexpr unsigned long PRESENT_BACKWARD_MS = 1500;
 constexpr unsigned long ACTION_FORWARD_MS = 1500;
 constexpr unsigned long RETURN_BACKWARD_MS = 1500;
 constexpr float GYRO_Z_LSB_PER_DPS = 131.0f;
 constexpr float PRESENT_TARGET_DEGREES = 360.0f;
-constexpr float GYRO_ANGLE_SCALE = 0.75f;
+constexpr float GYRO_ANGLE_SCALE = 1.25f;
 constexpr unsigned long ROTATION_TIMEOUT_MS = 6000;
 constexpr unsigned long GYRO_CALIBRATION_SAMPLES = 120;
 constexpr unsigned long GYRO_SAMPLE_DELAY_MS = 5;
@@ -391,13 +393,15 @@ void softStopDrive(bool motorAForward, bool motorBForward, int currentSpeed) {
 }
 
 void setMotorA(bool forward, int speedValue) {
-  digitalWrite(IN1, forward ? HIGH : LOW);
-  digitalWrite(IN2, forward ? LOW : HIGH);
+  bool physicalForward = MOTOR_A_INVERTED ? !forward : forward;
+  digitalWrite(IN1, physicalForward ? HIGH : LOW);
+  digitalWrite(IN2, physicalForward ? LOW : HIGH);
   analogWrite(ENA, speedValue);
 }
 
 void setMotorB(bool forward, int speedValue) {
-  digitalWrite(IN3, forward ? HIGH : LOW);
-  digitalWrite(IN4, forward ? LOW : HIGH);
+  bool physicalForward = MOTOR_B_INVERTED ? !forward : forward;
+  digitalWrite(IN3, physicalForward ? HIGH : LOW);
+  digitalWrite(IN4, physicalForward ? LOW : HIGH);
   analogWrite(ENB, speedValue);
 }
