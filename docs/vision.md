@@ -34,11 +34,16 @@ Este modulo nao executa narrativa e nao decide estado do app. Ele apenas observa
 Fornece:
 - `CAMERA_INDEX`
 - `CAMERA_WARMUP_FRAMES`
+- `CAMERA_FRAME_WIDTH`
+- `CAMERA_FRAME_HEIGHT`
+- `CAMERA_BUFFER_SIZE`
 - `DETECTION_CONFIDENCE`
 - `TRACKING_CONFIDENCE`
 - `ARUCO_MARKER_ID`
 - thresholds de `PRAYER_HANDS`
 - `GestureName`
+- `VISION_PERF_LOG`
+- `VISION_PERF_LOG_EVERY`
 
 ### `main.py`
 
@@ -72,8 +77,9 @@ O fluxo principal do arquivo acontece em `VisionSystem.read_inputs()`:
 1. verificar se a camera esta aberta
 2. capturar um frame
 3. converter BGR para RGB
-4. processar maos com MediaPipe Hands
-5. processar pose com MediaPipe Pose
+4. decidir, pelo estado atual do app, se maos, pose ou ArUco realmente precisam rodar
+5. processar maos com MediaPipe Hands apenas quando necessario
+6. processar pose com MediaPipe Pose apenas quando necessario
 6. classificar o gesto com `_detect_gesture()`
 7. detectar marker com `_detect_marker()`
 8. emitir log de debug resumido
@@ -138,7 +144,7 @@ Ordem atual de classificacao:
 - `POINT`
 - `CLOSED_FIST`
 
-Essa ordem importa, porque o primeiro gesto que casa e retornado.
+Essa ordem importa quando a classificacao geral esta ativa, mas a implementacao atual tambem aceita um `expected_gesture` para avaliar apenas o gesto necessario naquela etapa.
 
 #### `_extract_finger_state()`
 
@@ -206,12 +212,19 @@ Responsabilidades:
 
 Configura:
 - `cv2.VideoCapture`
-- `Hands`
+- duas instancias de `Hands`
 - `Pose`
 - `GestureClassifier`
 - detector ArUco
 - contadores de debug
 - warm-up da camera
+
+Detalhes importantes da configuracao atual:
+- a camera recebe largura e altura explicitamente
+- o buffer da camera e reduzido para baixar latencia
+- existe uma instancia leve de `Hands` para 1 mao
+- existe uma segunda instancia de `Hands` para o caso especial de duas maos
+- o `Pose` roda com `model_complexity=0` para reduzir custo
 
 #### `read_inputs()`
 
@@ -219,8 +232,14 @@ Metodo principal do modulo.
 
 Recebe o parametro:
 - `prioritize_prayer_hands`
+- `expected_gesture`
+- `detect_marker`
+- `allow_double_closed_fist`
 
-Esse parametro altera a prioridade de deteccao para o estado final do app.
+O metodo atual foi otimizado para performance:
+- se o estado nao precisa de pose, `Pose` nao roda
+- se o estado nao precisa de duas maos, usa apenas o detector leve
+- se o estado so precisa de um gesto especifico, o classificador testa apenas esse gesto
 
 #### `detect_gesture()`
 
@@ -263,6 +282,11 @@ Esse metodo e baseado em landmarks de pose, nao em landmarks de maos.
 Emite logs periodicos com:
 - numero de maos detectadas
 - se `PRAYER_HANDS` esta priorizado
+- tempo total de frame
+- tempo de captura
+- tempo de Hands
+- tempo de Pose
+- tempo de ArUco
 - gesto atual
 - estado resumido dos dedos da primeira mao
 
@@ -270,6 +294,7 @@ Esse log e util para diagnosticar:
 - maos vistas mas nao classificadas
 - conflitos entre gestos
 - thresholds muito rigidos
+- gargalos reais de pipeline
 
 #### `_detect_marker()`
 
@@ -306,7 +331,17 @@ No `_detect_gesture()`, a ordem define prioridade entre:
 
 Qualquer alteracao aqui pode mudar o comportamento real do sistema.
 
-### 2. `PRAYER_HANDS` tem modo especial de prioridade
+### 2. O arquivo foi otimizado para rodar menos trabalho por estado
+
+A performance atual depende fortemente de quatro escolhas:
+- nao rodar visao em estados que nao precisam de camera
+- nao rodar `Pose` fora da etapa final
+- nao rodar duas maos fora do fallback de `video8`
+- testar apenas o gesto esperado quando a etapa atual permite
+
+Essas otimizacoes devem ser preservadas.
+
+### 3. `PRAYER_HANDS` tem modo especial de prioridade
 
 Fora do estado final, a pose e avaliada depois dos gestos de mao.
 
@@ -314,7 +349,7 @@ No estado `WAITING_VIDEO9_TRIGGER`, `main.py` ativa `prioritize_prayer_hands`, e
 
 Esse detalhe e importante para evitar que o gesto final seja "roubado" por um gesto de mao.
 
-### 3. Thresholds sao calibracao de campo
+### 4. Thresholds sao calibracao de campo
 
 Varios comportamentos dependem de thresholds definidos em `config.py`.
 
@@ -329,25 +364,25 @@ Esses valores podem precisar de ajuste conforme:
 - distancia do ator
 - enquadramento da cena
 
-### 4. `DOUBLE_CLOSED_FIST` depende de duas maos consistentes no mesmo frame
+### 5. `DOUBLE_CLOSED_FIST` depende de duas maos consistentes no mesmo frame
 
 Se apenas uma mao fechar, o fallback do `video8` nao dispara.
 
 Esse comportamento e intencional e precisa ser preservado.
 
-### 5. O debug atual chama metodo interno do classifier
+### 6. O debug atual chama metodo interno do classifier
 
 `_debug_detection()` usa `self._classifier._extract_finger_state(...)`.
 
 Funciona, mas e uma dependencia interna do proprio modulo. Se a estrutura do classifier mudar, o debug precisa acompanhar.
 
-### 6. A deteccao de mao nao deve assumir perfeicao do frame
+### 7. A deteccao de mao nao deve assumir perfeicao do frame
 
 O campo `is_complete` protege contra landmarks fora da area valida.
 
 Se essa regra for relaxada demais, aumentam falsos positivos.
 
-### 7. ArUco e gestos sao caminhos paralelos
+### 8. ArUco e gestos sao caminhos paralelos
 
 O marker nao depende da deteccao de maos ou pose.
 

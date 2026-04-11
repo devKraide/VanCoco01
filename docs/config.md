@@ -178,10 +178,12 @@ Representam videos usados por transicoes narrativas especificas.
 
 ### `COLOR_VIDEO_PATHS`
 
-Mapeia eventos de cor recebidos do `CocoVision` para videos:
-- `COLOR_RED`
-- `COLOR_GREEN`
-- `COLOR_BLUE`
+Mapeia eventos de cor recebidos do `CocoVision` para videos.
+
+No estado atual do projeto, apenas uma cor esta configurada:
+- `COLOR_BLUE -> video6.mp4`
+
+Outras cores ainda podem chegar do firmware, mas o app nao dispara video para elas.
 
 ### `FINAL_OUTCOME` e `FINAL_VIDEO_PATHS`
 
@@ -208,10 +210,15 @@ Define as teclas de saida da aplicacao.
 Incluem:
 - `CAMERA_INDEX`
 - `CAMERA_WARMUP_FRAMES`
+- `CAMERA_FRAME_WIDTH`
+- `CAMERA_FRAME_HEIGHT`
+- `CAMERA_BUFFER_SIZE`
 - `DETECTION_CONFIDENCE`
 - `TRACKING_CONFIDENCE`
 - `DEBOUNCE_SECONDS`
 - `GESTURE_STABLE_FRAMES`
+- `VISION_PERF_LOG`
+- `VISION_PERF_LOG_EVERY`
 
 Esses valores afetam a experiencia real de deteccao.
 
@@ -337,5 +344,8 @@ Ao mexer em `config.py`, pense em tres grupos:
    - thresholds de gesto
    - thresholds de pose
    - confianca da visao
+   - resolucao da camera
+   - tamanho do buffer da camera
+   - telemetria opcional de performance
 
 O arquivo funciona melhor quando continua sendo uma fonte unica, simples e previsivel de configuracao global do sistema.
