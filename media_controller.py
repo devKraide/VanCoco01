@@ -171,6 +171,12 @@ class MediaController:
             self._media_player.video_set_key_input(False)
             return
 
+        if system_name == "Windows":
+            self._media_player.set_hwnd(video_surface_id)
+            self._media_player.video_set_mouse_input(False)
+            self._media_player.video_set_key_input(False)
+            return
+
         raise RuntimeError(f"Sistema operacional nao suportado: {system_name}")
 
     def _attach_player_events(self) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import hypot
+import platform
 import time
 from typing import Optional
 
@@ -279,7 +280,7 @@ class GestureClassifier:
 
 class VisionSystem:
     def __init__(self) -> None:
-        self._camera = cv2.VideoCapture(CAMERA_INDEX)
+        self._camera = self._open_camera()
         self._camera.set(cv2.CAP_PROP_BUFFERSIZE, CAMERA_BUFFER_SIZE)
         self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_FRAME_WIDTH)
         self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_FRAME_HEIGHT)
@@ -311,6 +312,22 @@ class VisionSystem:
         self._ready_frames = 0
         self._is_ready = False
         self._warm_up_camera()
+
+    def _open_camera(self):
+        if platform.system() == "Windows":
+            windows_backends = [
+                getattr(cv2, "CAP_DSHOW", None),
+                getattr(cv2, "CAP_MSMF", None),
+            ]
+            for backend in windows_backends:
+                if backend is None:
+                    continue
+                camera = cv2.VideoCapture(CAMERA_INDEX, backend)
+                if camera.isOpened():
+                    return camera
+                camera.release()
+
+        return cv2.VideoCapture(CAMERA_INDEX)
 
     def read_inputs(
         self,

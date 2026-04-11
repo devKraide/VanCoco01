@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import platform
 import threading
 from dataclasses import dataclass
 from queue import Empty, Queue
@@ -217,11 +218,15 @@ class RobotComm:
             device = port.device or ""
             if device in self._reserved_ports:
                 continue
+            if platform.system() == "Windows" and device.upper().startswith("COM"):
+                candidates.append(device)
+                continue
             description = (port.description or "").lower()
             manufacturer = (port.manufacturer or "").lower()
             if (
                 "usb" in description
                 or "uart" in description
+                or "serial" in description
                 or "wch" in manufacturer
                 or "silicon labs" in manufacturer
             ):
