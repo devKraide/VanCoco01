@@ -253,11 +253,11 @@ python rfcomm_serial_probe.py \
 
 Acao atual:
 
-- anda para frente `900 ms`
+- anda para frente `2000 ms`
+- para com desaceleracao curta
+- gira `~360 graus` usando `MPU6050`
 - para `250 ms`
-- gira a direita `700 ms`
-- para `250 ms`
-- anda para tras `800 ms`
+- anda para tras `1500 ms`
 - para `250 ms`
 - envia `COCOMAG_DONE`
 
@@ -265,12 +265,12 @@ Acao atual:
 
 Acao atual:
 
-- anda para frente `900 ms`
+- anda para frente `3000 ms`
+- para com desaceleracao curta
+- gira `90 graus` usando `MPU6050`
 - para `250 ms`
-- gira servo `SG90` no `D13` para `90 graus`
-- espera `700 ms`
-- volta servo para `0 grau`
-- para `250 ms`
+- anda para frente `1000 ms`
+- para com desaceleracao curta
 - envia `COCOMAG_DONE`
 
 ### CocoVision
@@ -279,11 +279,11 @@ Acao atual:
 
 Acao atual:
 
-- anda para frente `900 ms`
+- anda para frente `2000 ms`
+- para com desaceleracao curta
+- gira `~360 graus` usando `MPU6050`
 - para `250 ms`
-- gira a direita `700 ms`
-- para `250 ms`
-- anda para tras `800 ms`
+- anda para tras `1500 ms`
 - para `250 ms`
 - envia `COCOVISION_DONE`
 
@@ -291,8 +291,8 @@ Acao atual:
 
 Acao atual:
 
-- anda para frente `900 ms`
-- para `250 ms`
+- anda para frente `1500 ms`
+- para com desaceleracao curta
 - ativa leitura continua do sensor de cor
 - limpa debounce interno
 - envia `COCOVISION_DONE`
@@ -314,8 +314,8 @@ e tambem o formato:
 Acao atual:
 
 - desativa leitura de cor
-- anda para tras `900 ms`
-- para `250 ms`
+- anda para tras `1500 ms`
+- para com desaceleracao curta
 - envia `COCOVISION_DONE`
 
 ## Fluxo rapido de manutencao

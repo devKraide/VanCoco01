@@ -178,10 +178,12 @@ Representam videos usados por transicoes narrativas especificas.
 
 ### `COLOR_VIDEO_PATHS`
 
-Mapeia eventos de cor recebidos do `CocoVision` para videos:
-- `COLOR_RED`
-- `COLOR_GREEN`
-- `COLOR_BLUE`
+Mapeia eventos de cor recebidos do `CocoVision` para videos.
+
+No estado atual do projeto, apenas uma cor esta configurada:
+- `COLOR_BLUE -> video6.mp4`
+
+Outras cores ainda podem chegar do firmware, mas o app nao dispara video para elas.
 
 ### `FINAL_OUTCOME` e `FINAL_VIDEO_PATHS`
 
