@@ -44,9 +44,9 @@ video9b.mp4
 ## Rodar por Bluetooth RFCOMM
 
 ```bash
-sudo rfcomm bind /dev/rfcomm0 XX:XX:XX:XX:XX:XX 1
-sudo rfcomm bind /dev/rfcomm1 YY:YY:YY:YY:YY:YY 1
-export COCOMAG_PORT=/dev/rfcomm0
+sudo rfcomm bind /dev/rfcomm0 XX:XX:XX:XX:XX:XX 1 //ignorar isso 
+sudo rfcomm bind /dev/rfcomm1 YY:YY:YY:YY:YY:YY 1 //ignorar isso
+export COCOMAG_PORT=/dev/rfcomm0    // alterar isso conforme a ordem da conexão com o bluetooth -> se for primeiro = 0, senão = 1
 export COCOVISION_PORT=/dev/rfcomm1
 source .venv/bin/activate && python main.py
 ```
