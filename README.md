@@ -41,7 +41,7 @@ cd VanCoco01
 git checkout main
 ```
 
-## Windows (pré-requisitos)
+#### Windows (pré-requisitos)
 
 - Instalar VLC:
   https://images.videolan.org/vlc/index.pt_BR.html
