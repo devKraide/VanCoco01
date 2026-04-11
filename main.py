@@ -13,7 +13,7 @@ from media_controller import MediaController
 from robot_comm import RobotComm
 from story_engine import StoryEngine
 from state_manager import StateManager
-from vision import VisionSystem
+from vision import VisionInputs, VisionSystem
 
 
 class VanCocoApp:
@@ -33,14 +33,24 @@ class VanCocoApp:
                 self._media_controller.update_ui()
                 self._render_current_state()
                 key_code = self._media_controller.consume_key()
-                vision_inputs = self._vision_system.read_inputs(
-                    prioritize_prayer_hands=(
-                        self._state_manager.state is AppState.WAITING_VIDEO9_TRIGGER
-                    )
-                )
 
                 if key_code in EXIT_KEYS:
                     break
+
+                if self._state_manager.state is AppState.WARMING_UP:
+                    self._handle_warming_up_state()
+                    continue
+
+                vision_request = self._build_vision_request()
+                if vision_request["enabled"]:
+                    vision_inputs = self._vision_system.read_inputs(
+                        expected_gesture=vision_request["expected_gesture"],
+                        detect_marker=vision_request["detect_marker"],
+                        prioritize_prayer_hands=vision_request["prioritize_prayer_hands"],
+                        allow_double_closed_fist=vision_request["allow_double_closed_fist"],
+                    )
+                else:
+                    vision_inputs = VisionInputs(gesture=None, marker_detected=False)
 
                 if self._state_manager.state is AppState.IDLE_BLACK_SCREEN:
                     self._handle_idle_state(key_code, vision_inputs)
@@ -94,6 +104,7 @@ class VanCocoApp:
 
     def _render_current_state(self) -> None:
         if self._state_manager.state in {
+            AppState.WARMING_UP,
             AppState.IDLE_BLACK_SCREEN,
             AppState.WAITING_COCOMAG_ACTION,
             AppState.WAITING_COCOMAG_ACTION_COMPLETION,
@@ -106,6 +117,13 @@ class VanCocoApp:
             AppState.WAITING_VIDEO9_TRIGGER,
         }:
             self._media_controller.show_black_screen()
+
+    def _handle_warming_up_state(self) -> None:
+        if not self._vision_system.poll_ready():
+            return
+
+        print("[Main] entering idle")
+        self._state_manager.finish_warmup()
 
     def _handle_idle_state(self, key_code: int, vision_inputs) -> None:
         gesture_result = self._story_engine.consume_trigger(
@@ -339,6 +357,40 @@ class VanCocoApp:
             return CameraTriggerName.DOUBLE_CLOSED_FIST_DETECTED
 
         return None
+
+    def _build_vision_request(self) -> dict[str, object]:
+        state = self._state_manager.state
+        if state is AppState.IDLE_BLACK_SCREEN:
+            return {
+                "enabled": True,
+                "expected_gesture": self._story_engine.current_expected_gesture(),
+                "detect_marker": False,
+                "prioritize_prayer_hands": False,
+                "allow_double_closed_fist": False,
+            }
+
+        if state is AppState.WAITING_COCOMAG_ACTION:
+            return {"enabled": True, "expected_gesture": GestureName.V_SIGN, "detect_marker": False, "prioritize_prayer_hands": False, "allow_double_closed_fist": False}
+
+        if state is AppState.WAITING_VIDEO5_TRIGGER:
+            return {"enabled": True, "expected_gesture": GestureName.THUMB_UP, "detect_marker": False, "prioritize_prayer_hands": False, "allow_double_closed_fist": False}
+
+        if state is AppState.WAITING_VIDEO7_TRIGGER:
+            return {"enabled": True, "expected_gesture": GestureName.CLOSED_FIST, "detect_marker": False, "prioritize_prayer_hands": False, "allow_double_closed_fist": False}
+
+        if state is AppState.WAITING_VIDEO8_TRIGGER:
+            return {
+                "enabled": True,
+                "expected_gesture": None,
+                "detect_marker": True,
+                "prioritize_prayer_hands": False,
+                "allow_double_closed_fist": ENABLE_DOUBLE_CLOSED_FIST_FOR_VIDEO8,
+            }
+
+        if state is AppState.WAITING_VIDEO9_TRIGGER:
+            return {"enabled": True, "expected_gesture": GestureName.PRAYER_HANDS, "detect_marker": False, "prioritize_prayer_hands": True, "allow_double_closed_fist": False}
+
+        return {"enabled": False, "expected_gesture": None, "detect_marker": False, "prioritize_prayer_hands": False, "allow_double_closed_fist": False}
 
 
 if __name__ == "__main__":

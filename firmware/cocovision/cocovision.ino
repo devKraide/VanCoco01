@@ -2,6 +2,7 @@
 #include <BluetoothSerial.h>
 #include <Wire.h>
 #include <Adafruit_TCS34725.h>
+#include <MPU6050.h>
 
 #if defined(CONFIG_BT_ENABLED) && defined(CONFIG_BLUEDROID_ENABLED)
 #define COCOVISION_BT_AVAILABLE 1
@@ -21,11 +22,29 @@ constexpr int IN2 = 19;
 constexpr int ENB = 25;
 constexpr int IN3 = 26;
 constexpr int IN4 = 27;
-constexpr int MOTOR_SPEED = 180;
+constexpr bool MOTOR_A_INVERTED = false;
+constexpr bool MOTOR_B_INVERTED = true;
+constexpr int MOVE_SPEED = 220;
+constexpr int TURN_SPEED = 180;
+constexpr int RAMP_START_SPEED = 140;
+constexpr int RAMP_STEP_COUNT = 4;
+constexpr unsigned long RAMP_STEP_DELAY_MS = 25;
+constexpr unsigned long SOFT_STOP_STEP_DELAY_MS = 20;
 constexpr unsigned long FORWARD_MS = 900;
 constexpr unsigned long TURN_MS = 700;
 constexpr unsigned long BACKWARD_MS = 800;
 constexpr unsigned long STOP_MS = 250;
+constexpr unsigned long PRESENT_FORWARD_MS = 2000;
+constexpr unsigned long PRESENT_BACKWARD_MS = 1500;
+constexpr unsigned long ACTION_FORWARD_MS = 1500;
+constexpr unsigned long RETURN_BACKWARD_MS = 1500;
+constexpr float GYRO_Z_LSB_PER_DPS = 131.0f;
+constexpr float PRESENT_TARGET_DEGREES = 360.0f;
+constexpr float GYRO_ANGLE_SCALE = 1.25f;
+constexpr unsigned long ROTATION_TIMEOUT_MS = 6000;
+constexpr unsigned long GYRO_CALIBRATION_SAMPLES = 120;
+constexpr unsigned long GYRO_SAMPLE_DELAY_MS = 5;
+constexpr float GYRO_NOISE_FLOOR_DPS = 2.0f;
 
 Adafruit_TCS34725 tcs =
     Adafruit_TCS34725(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_4X);
@@ -36,6 +55,9 @@ String bluetoothBuffer = "";
 unsigned long lastSentAt = 0;
 bool isPresenting = false;
 bool sensorActive = false;
+bool mpuReady = false;
+float gyroZBiasDps = 0.0f;
+MPU6050 mpu;
 #if COCOVISION_BT_AVAILABLE
 BluetoothSerial SerialBT;
 #endif
@@ -48,6 +70,12 @@ void emitLine(const char* message);
 void runPresentation();
 void runAction();
 void runReturn();
+bool initializeMpu();
+bool calibrateGyroBias();
+bool rotateDegrees(float targetDegrees);
+void applyDrive(bool motorAForward, int motorASpeed, bool motorBForward, int motorBSpeed);
+void rampDrive(bool motorAForward, bool motorBForward, int targetSpeed);
+void softStopDrive(bool motorAForward, bool motorBForward, int currentSpeed);
 void moveForward();
 void moveBackward();
 void turnRight();
@@ -63,6 +91,7 @@ void setup() {
   Serial.println("COCOVISION_BT_UNAVAILABLE");
 #endif
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+  Wire.setTimeOut(50);
   pinMode(ENA, OUTPUT);
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
@@ -77,6 +106,9 @@ void setup() {
       delay(1000);
     }
   }
+  Serial.println("TCS34725_READY");
+
+  mpuReady = initializeMpu();
 }
 
 void loop() {
@@ -112,7 +144,11 @@ void handleCommand(const String& command) {
     return;
   }
 
+  Serial.print("COCOVISION_CMD=");
+  Serial.println(normalized);
+
   if (normalized == "COCOVISION:PRESENT") {
+    Serial.println("COCOVISION_RUN_PRESENT");
     isPresenting = true;
     runPresentation();
     isPresenting = false;
@@ -120,6 +156,7 @@ void handleCommand(const String& command) {
   }
 
   if (normalized == "COCOVISION:ACTION") {
+    Serial.println("COCOVISION_RUN_ACTION");
     isPresenting = true;
     runAction();
     isPresenting = false;
@@ -127,6 +164,7 @@ void handleCommand(const String& command) {
   }
 
   if (normalized == "COCOVISION:RETURN") {
+    Serial.println("COCOVISION_RUN_RETURN");
     isPresenting = true;
     runReturn();
     isPresenting = false;
@@ -176,21 +214,18 @@ void publishColorIfNeeded(const String& colorName) {
 
 void runPresentation() {
   moveForward();
-  delay(FORWARD_MS);
+  delay(PRESENT_FORWARD_MS);
 
-  stopMotors();
+  softStopDrive(true, true, MOVE_SPEED);
   delay(STOP_MS);
 
-  turnRight();
-  delay(TURN_MS);
-
-  stopMotors();
+  rotateDegrees(PRESENT_TARGET_DEGREES);
   delay(STOP_MS);
 
   moveBackward();
-  delay(BACKWARD_MS);
+  delay(PRESENT_BACKWARD_MS);
 
-  stopMotors();
+  softStopDrive(false, false, MOVE_SPEED);
   delay(STOP_MS);
 
   emitLine("COCOVISION_DONE");
@@ -198,9 +233,9 @@ void runPresentation() {
 
 void runAction() {
   moveForward();
-  delay(FORWARD_MS);
+  delay(ACTION_FORWARD_MS);
 
-  stopMotors();
+  softStopDrive(true, true, MOVE_SPEED);
   delay(STOP_MS);
 
   sensorActive = true;
@@ -212,9 +247,9 @@ void runAction() {
 void runReturn() {
   sensorActive = false;
   moveBackward();
-  delay(FORWARD_MS);
+  delay(RETURN_BACKWARD_MS);
 
-  stopMotors();
+  softStopDrive(false, false, MOVE_SPEED);
   delay(STOP_MS);
 
   emitLine("COCOVISION_DONE");
@@ -244,19 +279,86 @@ void emitLine(const char* message) {
 #endif
 }
 
+bool initializeMpu() {
+  mpu.initialize();
+  mpu.setFullScaleGyroRange(MPU6050_GYRO_FS_250);
+  if (!mpu.testConnection()) {
+    emitLine("COCOVISION_MPU_NOT_FOUND");
+    return false;
+  }
+
+  if (!calibrateGyroBias()) {
+    emitLine("COCOVISION_MPU_CALIBRATION_FAILED");
+    return false;
+  }
+
+  emitLine("COCOVISION_MPU_READY");
+  return true;
+}
+
+bool calibrateGyroBias() {
+  long accumulatedZ = 0;
+  for (unsigned long index = 0; index < GYRO_CALIBRATION_SAMPLES; ++index) {
+    accumulatedZ += mpu.getRotationZ();
+    delay(GYRO_SAMPLE_DELAY_MS);
+  }
+
+  gyroZBiasDps = (accumulatedZ / static_cast<float>(GYRO_CALIBRATION_SAMPLES)) / GYRO_Z_LSB_PER_DPS;
+  return true;
+}
+
+bool rotateDegrees(float targetDegrees) {
+  if (!mpuReady) {
+    emitLine("COCOVISION_MPU_UNAVAILABLE");
+    return false;
+  }
+
+  stopMotors();
+  delay(STOP_MS);
+  if (!calibrateGyroBias()) {
+    emitLine("COCOVISION_MPU_RECALIBRATION_FAILED");
+    return false;
+  }
+
+  unsigned long startedAt = millis();
+  unsigned long lastSampleAt = micros();
+  float accumulatedDegrees = 0.0f;
+
+  turnRight();
+  while (accumulatedDegrees < targetDegrees) {
+    unsigned long nowMicros = micros();
+    float deltaSeconds = (nowMicros - lastSampleAt) / 1000000.0f;
+    lastSampleAt = nowMicros;
+
+    float gyroZDps = (mpu.getRotationZ() / GYRO_Z_LSB_PER_DPS) - gyroZBiasDps;
+    if (fabsf(gyroZDps) >= GYRO_NOISE_FLOOR_DPS) {
+      float deltaDegrees = fabsf(gyroZDps) * deltaSeconds * GYRO_ANGLE_SCALE;
+      accumulatedDegrees += deltaDegrees;
+    }
+
+    if (millis() - startedAt > ROTATION_TIMEOUT_MS) {
+      softStopDrive(true, false, TURN_SPEED);
+      emitLine("COCOVISION_MPU_ROTATION_TIMEOUT");
+      return false;
+    }
+
+    delay(2);
+  }
+
+  softStopDrive(true, false, TURN_SPEED);
+  return true;
+}
+
 void moveForward() {
-  setMotorA(true, MOTOR_SPEED);
-  setMotorB(true, MOTOR_SPEED);
+  rampDrive(true, true, MOVE_SPEED);
 }
 
 void moveBackward() {
-  setMotorA(false, MOTOR_SPEED);
-  setMotorB(false, MOTOR_SPEED);
+  rampDrive(false, false, MOVE_SPEED);
 }
 
 void turnRight() {
-  setMotorA(true, MOTOR_SPEED);
-  setMotorB(false, MOTOR_SPEED);
+  rampDrive(true, false, TURN_SPEED);
 }
 
 void stopMotors() {
@@ -268,14 +370,38 @@ void stopMotors() {
   digitalWrite(IN4, LOW);
 }
 
+void applyDrive(bool motorAForward, int motorASpeed, bool motorBForward, int motorBSpeed) {
+  setMotorA(motorAForward, motorASpeed);
+  setMotorB(motorBForward, motorBSpeed);
+}
+
+void rampDrive(bool motorAForward, bool motorBForward, int targetSpeed) {
+  for (int step = 1; step <= RAMP_STEP_COUNT; ++step) {
+    int speedValue = RAMP_START_SPEED + ((targetSpeed - RAMP_START_SPEED) * step) / RAMP_STEP_COUNT;
+    applyDrive(motorAForward, speedValue, motorBForward, speedValue);
+    delay(RAMP_STEP_DELAY_MS);
+  }
+}
+
+void softStopDrive(bool motorAForward, bool motorBForward, int currentSpeed) {
+  for (int step = RAMP_STEP_COUNT; step >= 1; --step) {
+    int speedValue = RAMP_START_SPEED + ((currentSpeed - RAMP_START_SPEED) * step) / RAMP_STEP_COUNT;
+    applyDrive(motorAForward, speedValue, motorBForward, speedValue);
+    delay(SOFT_STOP_STEP_DELAY_MS);
+  }
+  stopMotors();
+}
+
 void setMotorA(bool forward, int speedValue) {
-  digitalWrite(IN1, forward ? HIGH : LOW);
-  digitalWrite(IN2, forward ? LOW : HIGH);
+  bool physicalForward = MOTOR_A_INVERTED ? !forward : forward;
+  digitalWrite(IN1, physicalForward ? HIGH : LOW);
+  digitalWrite(IN2, physicalForward ? LOW : HIGH);
   analogWrite(ENA, speedValue);
 }
 
 void setMotorB(bool forward, int speedValue) {
-  digitalWrite(IN3, forward ? HIGH : LOW);
-  digitalWrite(IN4, forward ? LOW : HIGH);
+  bool physicalForward = MOTOR_B_INVERTED ? !forward : forward;
+  digitalWrite(IN3, physicalForward ? HIGH : LOW);
+  digitalWrite(IN4, physicalForward ? LOW : HIGH);
   analogWrite(ENB, speedValue);
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import platform
 import threading
 from dataclasses import dataclass
 from queue import Empty, Queue
@@ -119,8 +120,9 @@ class RobotComm:
 
         try:
             connection = serial.Serial(port, self._get_baudrate(robot), timeout=0.1)
-            connection.reset_input_buffer()
-            connection.reset_output_buffer()
+            if mode == "serial":
+                connection.reset_input_buffer()
+                connection.reset_output_buffer()
             self._reserved_ports.add(port)
             self._connections[robot] = connection
         except serial.SerialException as exc:
@@ -151,6 +153,7 @@ class RobotComm:
 
         try:
             with self._serial_lock:
+                print(f"[RobotComm] Enviando para {robot}: {robot}:{command}")
                 connection.write(f"{robot}:{command}\n".encode("utf-8"))
                 connection.flush()
             return True
@@ -215,11 +218,15 @@ class RobotComm:
             device = port.device or ""
             if device in self._reserved_ports:
                 continue
+            if platform.system() == "Windows" and device.upper().startswith("COM"):
+                candidates.append(device)
+                continue
             description = (port.description or "").lower()
             manufacturer = (port.manufacturer or "").lower()
             if (
                 "usb" in description
                 or "uart" in description
+                or "serial" in description
                 or "wch" in manufacturer
                 or "silicon labs" in manufacturer
             ):

@@ -72,7 +72,7 @@ Entrega entradas vindas da camera:
 - gesto detectado
 - marker ArUco detectado
 
-`main.py` consulta a visao a cada ciclo do loop principal.
+`main.py` consulta a visao apenas quando o estado atual realmente precisa de camera.
 
 ### `gesture_mapper.py`
 
@@ -107,7 +107,8 @@ Cada iteracao faz, nesta ordem:
 1. atualiza a UI
 2. renderiza o estado visual atual
 3. consome tecla do teclado
-4. le entradas da camera
+4. monta uma requisicao minima de visao baseada no estado atual
+5. le entradas da camera apenas se a etapa atual exigir isso
 5. trata saida (`q` ou `Esc`)
 6. despacha a execucao para o handler correspondente ao `AppState`
 
@@ -146,6 +147,7 @@ E o coracao do arquivo.
 Responsabilidades:
 - manter o loop principal
 - atualizar entradas e saidas
+- reduzir custo de visao em estados que nao precisam de camera
 - escolher qual handler executar
 - garantir encerramento limpo
 
@@ -245,6 +247,19 @@ Faz a ponte entre:
 - gesto vindo da camera
 
 O teclado tem prioridade. Se nao houver tecla mapeada, usa o gesto vindo da visao.
+
+### `_build_vision_request()`
+
+Traduz o estado operacional atual em uma requisicao minima para a pipeline de visao.
+
+Esse metodo define:
+- se a visao deve rodar ou nao
+- qual gesto e esperado
+- se ArUco deve ser verificado
+- se `PRAYER_HANDS` deve ter prioridade
+- se duas maos sao realmente necessarias
+
+Esse metodo e importante para performance, especialmente no Linux.
 
 ### `_read_video8_trigger_source()`
 

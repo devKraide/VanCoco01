@@ -8,7 +8,7 @@ Ele roda em um ESP32 e executa tres responsabilidades principais:
 
 - receber comandos textuais vindos do computador
 - acionar motores DC por meio de um driver L298N
-- acionar um servo `SG90` para a rotina de `ACTION`
+- usar `MPU6050` para giro por angulo acumulado
 
 O firmware foi escrito para manter o protocolo de aplicacao simples:
 - entrada por linhas de texto
@@ -144,33 +144,42 @@ Essas constantes definem o mapeamento eletrico atual:
 
 O firmware assume que esse cabeamento e a fonte de verdade. Se o hardware mudar, a primeira manutencao normalmente e aqui.
 
-### Constantes de movimento e servo
+### Constantes de movimento, giro e servo
 
 ```cpp
-constexpr int MOTOR_SPEED = 180;
-constexpr unsigned long FORWARD_MS = 900;
-constexpr unsigned long TURN_MS = 700;
-constexpr unsigned long BACKWARD_MS = 800;
+constexpr int MOVE_SPEED = 220;
+constexpr int TURN_SPEED = 180;
 constexpr unsigned long STOP_MS = 250;
-constexpr int SERVO_REST_ANGLE = 0;
-constexpr int SERVO_ACTION_ANGLE = 90;
-constexpr unsigned long SERVO_HOLD_MS = 700;
+constexpr unsigned long PRESENT_FORWARD_MS = 2000;
+constexpr unsigned long PRESENT_BACKWARD_MS = 1500;
+constexpr unsigned long ACTION_FORWARD_MS = 3000;
+constexpr float ACTION_TURN_DEGREES = 90.0f;
+constexpr unsigned long ACTION_POST_TURN_FORWARD_MS = 1000;
+constexpr float PRESENT_TARGET_DEGREES = 360.0f;
+constexpr float GYRO_ANGLE_SCALE = 0.75f;
+constexpr int SERVO_REST_ANGLE = 140;
+constexpr int SERVO_PICKUP_ANGLE = 0;
+constexpr int SERVO_PARTIAL_RETURN_ANGLE = 90;
+constexpr unsigned long SERVO_PICKUP_HOLD_MS = 1000;
 ```
 
 Essas constantes definem o comportamento fisico atual.
 
 Importante:
-- o movimento e controlado por tempo, nao por encoder
+- translacao continua controlada por tempo, nao por encoder
+- o giro importante usa `MPU6050`
 - nao existe feedback de posicao real
 - a precisao depende de bateria, atrito, piso e carga do robô
 
 Detalhes:
-- `MOTOR_SPEED = 180` define o PWM aplicado nos dois motores
-- `FORWARD_MS`, `TURN_MS`, `BACKWARD_MS` definem a duracao das etapas da apresentacao
+- `MOVE_SPEED = 220` define a potencia de translacao
+- `TURN_SPEED = 180` reduz agressividade do giro para melhorar estabilidade
 - `STOP_MS` insere pausas mecanicas entre etapas
-- `SERVO_REST_ANGLE` e a posicao neutra do servo
-- `SERVO_ACTION_ANGLE` e o angulo de acao
-- `SERVO_HOLD_MS` e o tempo em que o servo permanece no angulo de acao
+- `PRESENT_FORWARD_MS` e `PRESENT_BACKWARD_MS` definem a apresentacao atual
+- `ACTION_FORWARD_MS`, `ACTION_TURN_DEGREES` e `ACTION_POST_TURN_FORWARD_MS` definem a `ACTION` atual
+- `PRESENT_TARGET_DEGREES` e o alvo de giro do `PRESENT`
+- `GYRO_ANGLE_SCALE` ajusta a integracao do gyro para o comportamento fisico real do robô
+- os angulos do servo continuam declarados no firmware, mas a `ACTION` atual nao usa mais o `SG90`
 
 ### Estado global
 
@@ -385,7 +394,7 @@ if (normalized == "COCOMAG:ACTION") {
 }
 ```
 
-Executa a acao individual com servo.
+Executa a acao individual atual do `CocoMag`.
 
 ## Rotinas de alto nivel
 
@@ -393,34 +402,34 @@ Executa a acao individual com servo.
 
 Sequencia atual:
 
-1. frente por `FORWARD_MS`
+1. frente por `PRESENT_FORWARD_MS`
 2. pausa por `STOP_MS`
-3. giro a direita por `TURN_MS`
+3. giro por `MPU6050` ate aproximadamente `360 graus`
 4. pausa por `STOP_MS`
-5. re por `BACKWARD_MS`
+5. re por `PRESENT_BACKWARD_MS`
 6. pausa por `STOP_MS`
 7. emitir `COCOMAG_DONE`
 
 Observacoes tecnicas:
 - a funcao e completamente bloqueante
-- o uso de `delay()` torna o comportamento previsivel, mas impede multitarefa
+- a translacao usa `delay()`, mas o giro usa integracao do giroscopio
 - essa escolha e adequada aqui porque o protocolo exige simplicidade e previsibilidade
 
 ### `runAction()`
 
 Sequencia atual:
 
-1. frente por `FORWARD_MS`
+1. frente por `ACTION_FORWARD_MS`
 2. pausa por `STOP_MS`
-3. servo vai para `SERVO_ACTION_ANGLE`
-4. espera `SERVO_HOLD_MS`
-5. servo retorna para `SERVO_REST_ANGLE`
+3. giro por `MPU6050` ate `ACTION_TURN_DEGREES`
+4. pausa por `STOP_MS`
+5. frente por `ACTION_POST_TURN_FORWARD_MS`
 6. pausa por `STOP_MS`
 7. emitir `COCOMAG_DONE`
 
 Observacoes:
-- o movimento mecanico do servo e aberto, sem confirmacao de posicao
-- o tempo de espera assume que o servo consegue chegar ao angulo configurado dentro da janela
+- a rotina atual e totalmente baseada em locomocao
+- o `SG90` continua inicializado no boot, mas nao participa mais da `ACTION` atual
 
 ## Saida de mensagens
 
@@ -438,15 +447,15 @@ Esse e o principal ponto que torna o firmware pronto para multiplos transportes 
 
 ### `moveForward()`
 
-Aciona ambos os motores no sentido positivo com `MOTOR_SPEED`.
+Aciona ambos os motores no sentido positivo com rampa curta ate `MOVE_SPEED`.
 
 ### `moveBackward()`
 
-Aciona ambos os motores no sentido inverso com `MOTOR_SPEED`.
+Aciona ambos os motores no sentido inverso com rampa curta ate `MOVE_SPEED`.
 
 ### `turnRight()`
 
-Aciona um motor para frente e o outro para tras, produzindo giro no eixo.
+Aciona um motor para frente e o outro para tras, produzindo giro no eixo com rampa curta ate `TURN_SPEED`.
 
 ### `stopMotors()`
 
@@ -468,13 +477,13 @@ Esse nivel de abstracao torna facil mudar as rotinas de alto nivel sem repetir l
 
 ## Pontos criticos e de manutencao
 
-### 1. O firmware usa controle por tempo, nao por posicao
+### 1. O firmware mistura translacao por tempo com giro por giroscopio
 
-Essa e a principal limitacao tecnica atual.
+Essa e a principal caracteristica tecnica atual.
 
 Consequencias:
 - a distancia percorrida varia conforme bateria, piso e carga
-- o angulo de giro nao e absoluto
+- o angulo de giro fica muito mais controlado que no metodo puramente temporal
 - a repetibilidade fisica e boa para apresentacao, mas nao metrologica
 
 ### 2. `delay()` bloqueia tudo
@@ -513,13 +522,13 @@ Se mudar:
 
 sera necessario atualizar o lado Python junto.
 
-### 6. O servo e inicializado no boot e levado ao repouso
+### 6. O servo e inicializado no boot, mas nao participa da `ACTION` atual
 
 Isso e importante para previsibilidade mecanica.
 
 Se o hardware do servo mudar:
 - revisar pulso minimo e maximo do `attach`
-- revisar angulos de repouso e acao
+- revisar angulos declarados, mesmo que a rotina atual nao os use
 
 ### 7. O codigo ja esta bem separado por camadas
 

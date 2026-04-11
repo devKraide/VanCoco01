@@ -16,7 +16,7 @@ class PlaybackRequest:
 
 class StateManager:
     def __init__(self) -> None:
-        self._state = AppState.IDLE_BLACK_SCREEN
+        self._state = AppState.WARMING_UP
         self._active_request: Optional[PlaybackRequest] = None
         self._last_triggered_gesture: Optional[GestureName] = None
         self._last_triggered_at = 0.0
@@ -98,6 +98,10 @@ class StateManager:
         self._state = AppState.WAITING_VIDEO9_TRIGGER
 
     def finish_playback(self) -> None:
+        self._active_request = None
+        self._state = AppState.IDLE_BLACK_SCREEN
+
+    def finish_warmup(self) -> None:
         self._active_request = None
         self._state = AppState.IDLE_BLACK_SCREEN
 

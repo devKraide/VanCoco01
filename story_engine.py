@@ -243,6 +243,12 @@ class StoryEngine:
     def is_waiting_video9_trigger(self) -> bool:
         return self._stage is StoryStage.WAITING_VIDEO9_TRIGGER
 
+    def current_expected_gesture(self) -> Optional[GestureName]:
+        step = self._build_current_step()
+        if step is None:
+            return None
+        return step.expected_gesture
+
     def _build_current_step(self) -> Optional[StoryStep]:
         if self._stage is StoryStage.WAIT_HAND_OPEN:
             return StoryStep(

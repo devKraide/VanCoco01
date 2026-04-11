@@ -8,6 +8,7 @@ Ele roda em um ESP32 e combina tres blocos funcionais no mesmo firmware:
 
 - transporte de comandos por USB serial e opcionalmente por Bluetooth Classic
 - controle de locomocao via L298N e dois motores DC
+- giro por `MPU6050`
 - aquisicao e classificacao de cor via sensor `TCS34725`
 
 O papel do firmware e executar a parte física do `CocoVision` no roteiro:
@@ -225,20 +226,25 @@ Mesmo padrao logico do `CocoMag`:
 - `IN1`, `IN2`: direcao do motor A
 - `IN3`, `IN4`: direcao do motor B
 
-### Parametros de movimento
+### Parametros de movimento e giro
 
 ```cpp
-constexpr int MOTOR_SPEED = 180;
-constexpr unsigned long FORWARD_MS = 900;
-constexpr unsigned long TURN_MS = 700;
-constexpr unsigned long BACKWARD_MS = 800;
+constexpr int MOVE_SPEED = 220;
+constexpr int TURN_SPEED = 180;
 constexpr unsigned long STOP_MS = 250;
+constexpr unsigned long PRESENT_FORWARD_MS = 2000;
+constexpr unsigned long PRESENT_BACKWARD_MS = 1500;
+constexpr unsigned long ACTION_FORWARD_MS = 1500;
+constexpr unsigned long RETURN_BACKWARD_MS = 1500;
+constexpr float PRESENT_TARGET_DEGREES = 360.0f;
+constexpr float GYRO_ANGLE_SCALE = 1.25f;
 ```
 
 Esses valores definem o comportamento fisico atual do robô.
 
 Importante:
-- o sistema usa controle por tempo
+- translacao usa controle por tempo
+- o giro importante usa `MPU6050`
 - nao ha encoder
 - nao ha odometria
 - nao ha realimentacao de posicao
@@ -248,6 +254,14 @@ O movimento depende de:
 - atrito do piso
 - massa transportada
 - estado mecanico
+
+Na pratica:
+- `MOVE_SPEED = 220` e a velocidade de translacao
+- `TURN_SPEED = 180` privilegia estabilidade no giro
+- `PRESENT_FORWARD_MS` e `PRESENT_BACKWARD_MS` definem a apresentacao atual
+- `ACTION_FORWARD_MS` e `RETURN_BACKWARD_MS` definem a fase de leitura e retorno
+- `PRESENT_TARGET_DEGREES` e o alvo de giro do `PRESENT`
+- `GYRO_ANGLE_SCALE` ajusta a integracao do gyro ao comportamento fisico real
 
 ## Instancia do sensor
 
@@ -614,11 +628,11 @@ Ao publicar, o firmware memoriza:
 ### `runPresentation()`
 
 Sequencia:
-1. frente por `FORWARD_MS`
+1. frente por `PRESENT_FORWARD_MS`
 2. pausa por `STOP_MS`
-3. giro a direita por `TURN_MS`
+3. giro por `MPU6050` ate aproximadamente `360 graus`
 4. pausa por `STOP_MS`
-5. re por `BACKWARD_MS`
+5. re por `PRESENT_BACKWARD_MS`
 6. pausa por `STOP_MS`
 7. emitir `COCOVISION_DONE`
 
@@ -627,7 +641,7 @@ Essa e a rotina cenica da apresentacao inicial do robô.
 ### `runAction()`
 
 Sequencia:
-1. frente por `FORWARD_MS`
+1. frente por `ACTION_FORWARD_MS`
 2. pausa por `STOP_MS`
 3. ativar o sensor (`sensorActive = true`)
 4. limpar o estado do debounce de cor
@@ -641,13 +655,13 @@ O ponto mais importante aqui e conceitual:
 
 Sequencia:
 1. desligar o sensor (`sensorActive = false`)
-2. mover para tras por `FORWARD_MS`
+2. mover para tras por `RETURN_BACKWARD_MS`
 3. pausa por `STOP_MS`
 4. emitir `COCOVISION_DONE`
 
 Observacao importante:
-- o retorno usa `FORWARD_MS`
-- isso garante que o tempo de volta seja exatamente o mesmo do avancar da rotina `ACTION`
+- hoje o retorno usa explicitamente `RETURN_BACKWARD_MS`
+- no estado atual, ele esta alinhado com `ACTION_FORWARD_MS` em `1500 ms`
 
 Esse detalhe foi escolhido explicitamente para manter simetria temporal na apresentacao.
 
