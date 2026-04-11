@@ -47,12 +47,19 @@ git checkout main
   https://images.videolan.org/vlc/index.pt_BR.html
 
 ```bash
-git clone <URL_DO_REPOSITORIO>
+git clone <URL>
 cd VanCoco01
 git checkout windows-port
-```
 
-## Instalar dependências (após estar na branch escolhida = usar comandos acima)
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+```
+Para instruções completas de setup no Windows, veja:
+docs/windows-setup.md
+
+
+## Instalar dependências (após estar na branch escolhida [linux/macOS]= usar comandos acima)
 
 ```bash
 python3.11 -m venv .venv
