@@ -60,6 +60,13 @@ python -m pip install --upgrade pip setuptools wheel
 python -m pip install -r requirements.txt
 ```
 
+## Windows (pré-requisitos)
+
+- Instalar VLC:
+  https://images.videolan.org/vlc/index.pt_BR.html
+
+> Necessário para reprodução de vídeo (`python-vlc`)
+
 ## 7. Rodar o projeto
 
 ```powershell

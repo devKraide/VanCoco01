@@ -41,7 +41,11 @@ cd VanCoco01
 git checkout main
 ```
 
-#### Windows
+## Windows (pré-requisitos)
+
+- Instalar VLC:
+  https://images.videolan.org/vlc/index.pt_BR.html
+
 ```bash
 git clone <URL_DO_REPOSITORIO>
 cd VanCoco01
