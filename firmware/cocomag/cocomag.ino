@@ -159,8 +159,6 @@ void runPresentation() {
   delay(STOP_MS);
 
   rotateDegrees(PRESENT_TARGET_DEGREES);
-
-  softStopDrive(true, false, TURN_SPEED);
   delay(STOP_MS);
 
   moveBackward();
