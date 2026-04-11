@@ -12,12 +12,45 @@ Documentacao completa:
 sudo apt update
 sudo apt install -y python3.11 python3.11-venv python3-pip vlc libxcb-cursor0
 ```
+## Status do projeto
 
-## Clonar e instalar
+Atualmente, o projeto possui branches diferentes para cada ambiente de execução.
 
+### Branches
+- `main` → versão base / macOS (**inativa no momento**)
+- `linux-tests` → versão atual mais estável para **Linux**
+- `windows-port` → versão em adaptação para **Windows** (usar apenas quando estiver pronta)
+
+### Qual branch usar?
+- **Linux:** usar `linux-tests`
+- **macOS:** `main` (somente se necessário)
+- **Windows:** `windows-port` (quando disponível/estável)
+
+### Como clonar e entrar na branch correta
+
+#### Linux
 ```bash
 git clone <URL_DO_REPOSITORIO>
 cd VanCoco01
+git checkout linux-tests
+```
+#### MacOS
+```bash
+git clone <URL_DO_REPOSITORIO>
+cd VanCoco01
+git checkout main
+```
+
+#### Windows
+```bash
+git clone <URL_DO_REPOSITORIO>
+cd VanCoco01
+git checkout windows-port
+```
+
+## Instalar dependências (após estar na branch escolhida = usar comandos acima)
+
+```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip setuptools wheel
