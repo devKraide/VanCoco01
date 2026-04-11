@@ -17,7 +17,7 @@ sudo apt install -y python3.11 python3.11-venv python3-pip vlc libxcb-cursor0
 
 ```bash
 git clone <URL_DO_REPOSITORIO>
-cd vanCoco
+cd VanCoco01
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip setuptools wheel
@@ -41,14 +41,6 @@ video9a.mp4
 video9b.mp4
 ```
 
-## Rodar por USB
-
-```bash
-export COCOMAG_PORT=/dev/ttyUSB0
-export COCOVISION_PORT=/dev/ttyUSB1
-source .venv/bin/activate && python main.py
-```
-
 ## Rodar por Bluetooth RFCOMM
 
 ```bash
@@ -68,4 +60,12 @@ python rfcomm_serial_probe.py --port /dev/rfcomm0 --command COCOMAG:ACTION
 python rfcomm_serial_probe.py --port /dev/rfcomm1 --command COCOVISION:PRESENT
 python rfcomm_serial_probe.py --port /dev/rfcomm1 --command COCOVISION:ACTION --listen-seconds 8
 python rfcomm_serial_probe.py --port /dev/rfcomm1 --command COCOVISION:RETURN
+```
+
+## Rodar por USB
+
+```bash
+export COCOMAG_PORT=/dev/ttyUSB0
+export COCOVISION_PORT=/dev/ttyUSB1
+source .venv/bin/activate && python main.py
 ```
