@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import hypot
+import platform
 import time
 from typing import Optional
 
@@ -15,6 +16,8 @@ from config import (
     CAMERA_FRAME_HEIGHT,
     CAMERA_FRAME_WIDTH,
     CAMERA_WARMUP_FRAMES,
+    CAMERA_TARGET_FPS,
+    CAMERA_USE_MJPG,
     DETECTION_CONFIDENCE,
     GestureName,
     POSE_VISIBILITY_THRESHOLD,
@@ -279,10 +282,14 @@ class GestureClassifier:
 
 class VisionSystem:
     def __init__(self) -> None:
-        self._camera = cv2.VideoCapture(CAMERA_INDEX)
+        self._camera = self._open_camera()
         self._camera.set(cv2.CAP_PROP_BUFFERSIZE, CAMERA_BUFFER_SIZE)
         self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_FRAME_WIDTH)
         self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_FRAME_HEIGHT)
+        if CAMERA_TARGET_FPS > 0:
+            self._camera.set(cv2.CAP_PROP_FPS, CAMERA_TARGET_FPS)
+        if CAMERA_USE_MJPG:
+            self._camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         hands_api = _resolve_hands_api()
         pose_api = _resolve_pose_api()
         self._hands_single = hands_api.Hands(
@@ -311,6 +318,17 @@ class VisionSystem:
         self._ready_frames = 0
         self._is_ready = False
         self._warm_up_camera()
+
+    def _open_camera(self):
+        if platform.system() == "Linux":
+            v4l2_backend = getattr(cv2, "CAP_V4L2", None)
+            if v4l2_backend is not None:
+                camera = cv2.VideoCapture(CAMERA_INDEX, v4l2_backend)
+                if camera.isOpened():
+                    return camera
+                camera.release()
+
+        return cv2.VideoCapture(CAMERA_INDEX)
 
     def read_inputs(
         self,
