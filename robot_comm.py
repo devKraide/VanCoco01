@@ -50,9 +50,9 @@ class RobotComm:
         self._serial_threads: list[threading.Thread] = []
         self._serial_running = False
         self._accept_color_events = True
+        self._connect_central_fallback()
         self._connect_robot("COCOMAG")
         self._connect_robot("COCOVISION")
-        self._connect_central_fallback()
 
     def send_command(self, robot: str, command: str) -> None:
         if self._send_robot_command(robot, command):
