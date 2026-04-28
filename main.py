@@ -6,11 +6,11 @@ from config import (
     ENABLE_DOUBLE_CLOSED_FIST_FOR_VIDEO8,
     EXIT_KEYS,
     GestureName,
-    KEY_ACTIONS,
+    VIDEO_ACTIONS,
 )
-from gesture_mapper import GestureMapper
+from gesture_mapper import GestureMapper, GestureResult
 from media_controller import MediaController
-from robot_comm import RobotComm
+from robot_comm import RobotComm, RobotEvent
 from story_engine import StoryEngine
 from state_manager import StateManager
 from vision import VisionInputs, VisionSystem
@@ -51,6 +51,8 @@ class VanCocoApp:
                     )
                 else:
                     vision_inputs = VisionInputs(gesture=None, marker_detected=False)
+
+                self._handle_central_fallback_triggers()
 
                 if self._state_manager.state is AppState.IDLE_BLACK_SCREEN:
                     self._handle_idle_state(key_code, vision_inputs)
@@ -339,11 +341,200 @@ class VanCocoApp:
 
         self._media_controller.start_mock_video(transition.mock_video_duration)
 
-    def _read_trigger_source(self, key_code: int, vision_inputs):
-        keyboard_gesture = KEY_ACTIONS.get(key_code) if key_code is not None else None
-        if keyboard_gesture is not None:
-            return self._gesture_mapper.map_gesture(keyboard_gesture)
+    def _handle_central_fallback_triggers(self) -> None:
+        trigger_count = self._robot_comm.poll_central_fallback_triggers()
+        for _ in range(trigger_count):
+            self._consume_central_fallback_trigger()
 
+    def _consume_central_fallback_trigger(self) -> None:
+        state = self._state_manager.state
+        state_name = state.value
+
+        expected_gesture = self._story_engine.current_expected_gesture()
+        if expected_gesture is not None and state in {
+            AppState.IDLE_BLACK_SCREEN,
+            AppState.WAITING_COCOMAG_ACTION,
+            AppState.WAITING_VIDEO5_TRIGGER,
+            AppState.WAITING_VIDEO7_TRIGGER,
+            AppState.WAITING_VIDEO9_TRIGGER,
+        }:
+            if self._apply_fallback_gesture(expected_gesture):
+                print(
+                    f"CENTRAL_FALLBACK_ACCEPTED: {expected_gesture.value} in {state_name}"
+                )
+                return
+
+        if state is AppState.WAITING_PRESENTATION:
+            robot_name = self._story_engine.current_pending_presentation_robot()
+            if robot_name is not None:
+                self._apply_fallback_robot_event(RobotEvent(robot=robot_name, status="DONE"))
+                print(f"CENTRAL_FALLBACK_ACCEPTED: {robot_name}_DONE in {state_name}")
+                return
+
+        if state is AppState.WAITING_COCOMAG_ACTION_COMPLETION:
+            self._apply_fallback_robot_event(RobotEvent(robot="COCOMAG", status="DONE"))
+            print("CENTRAL_FALLBACK_ACCEPTED: COCOMAG_DONE in waiting_cocomag_action_completion")
+            return
+
+        if state is AppState.WAITING_COCOVISION_ACTION_COMPLETION:
+            self._apply_fallback_robot_event(RobotEvent(robot="COCOVISION", status="DONE"))
+            print(
+                "CENTRAL_FALLBACK_ACCEPTED: COCOVISION_DONE in waiting_cocovision_action_completion"
+            )
+            return
+
+        if state is AppState.WAITING_COLOR:
+            self._apply_fallback_robot_event(RobotEvent(robot="COCOVISION", status="COLOR_BLUE"))
+            print("CENTRAL_FALLBACK_ACCEPTED: COLOR_BLUE in waiting_color")
+            return
+
+        if state is AppState.WAITING_COCOVISION_RETURN_COMPLETION:
+            self._apply_fallback_robot_event(RobotEvent(robot="COCOVISION", status="DONE"))
+            print(
+                "CENTRAL_FALLBACK_ACCEPTED: COCOVISION_DONE in waiting_cocovision_return_completion"
+            )
+            return
+
+        if state is AppState.WAITING_VIDEO8_TRIGGER:
+            self._apply_fallback_video8_trigger(CameraTriggerName.MAGNIFIER_MARKER_DETECTED)
+            print("CENTRAL_FALLBACK_ACCEPTED: VIDEO8_TRIGGER in waiting_video8_trigger")
+            return
+
+        print(f"CENTRAL_FALLBACK_REJECTED in {state_name}")
+
+    def _apply_fallback_gesture(self, gesture: GestureName) -> bool:
+        gesture_result = GestureResult(gesture=gesture, action=VIDEO_ACTIONS.get(gesture))
+        accepted_result = self._story_engine.consume_trigger(gesture_result)
+        if accepted_result is None:
+            return False
+
+        state = self._state_manager.state
+        if state is AppState.IDLE_BLACK_SCREEN:
+            if accepted_result.action is None:
+                return False
+
+            playback_started = self._state_manager.request_playback(
+                gesture=accepted_result.gesture,
+                action=accepted_result.action,
+            )
+            if not playback_started:
+                return False
+
+            self._media_controller.start_video(accepted_result.action.video_path)
+            return True
+
+        if state is AppState.WAITING_COCOMAG_ACTION:
+            transition = self._story_engine.complete_active_step()
+            for robot_name, command in transition.robot_commands:
+                self._robot_comm.send_command(robot_name, command)
+            self._state_manager.enter_waiting_cocomag_action_completion()
+            return True
+
+        if state is AppState.WAITING_VIDEO5_TRIGGER:
+            if accepted_result.action is None:
+                return False
+
+            self._state_manager.start_system_playback(accepted_result.action.video_path)
+            if accepted_result.action.video_path.exists():
+                self._media_controller.start_video(accepted_result.action.video_path)
+            else:
+                self._media_controller.start_mock_video(2.0)
+            return True
+
+        if state is AppState.WAITING_VIDEO7_TRIGGER:
+            transition = self._story_engine.complete_active_step()
+            for robot_name, command in transition.robot_commands:
+                self._robot_comm.send_command(robot_name, command)
+            self._state_manager.enter_waiting_cocovision_return_completion()
+            return True
+
+        if state is AppState.WAITING_VIDEO9_TRIGGER:
+            transition = self._story_engine.complete_active_step()
+            if transition.video_path is None:
+                return False
+
+            self._state_manager.start_system_playback(transition.video_path)
+            if transition.video_path.exists():
+                self._media_controller.start_video(transition.video_path)
+            else:
+                self._media_controller.start_mock_video(transition.mock_video_duration)
+            return True
+
+        return False
+
+    def _apply_fallback_robot_event(self, event: RobotEvent) -> None:
+        state = self._state_manager.state
+        if state is AppState.WAITING_PRESENTATION:
+            transition = self._story_engine.consume_robot_event(event)
+            if transition.video_path is None:
+                return
+
+            self._state_manager.start_system_playback(transition.video_path)
+            if transition.video_path.exists():
+                self._media_controller.start_video(transition.video_path)
+            else:
+                self._media_controller.start_mock_video(transition.mock_video_duration)
+            return
+
+        if state is AppState.WAITING_COCOMAG_ACTION_COMPLETION:
+            transition = self._story_engine.consume_cocomag_action_result(event)
+            if transition.video_path is None:
+                return
+
+            self._state_manager.start_system_playback(transition.video_path)
+            if transition.video_path.exists():
+                self._media_controller.start_video(transition.video_path)
+            else:
+                self._media_controller.start_mock_video(transition.mock_video_duration)
+            return
+
+        if state is AppState.WAITING_COCOVISION_ACTION_COMPLETION:
+            self._story_engine.consume_cocovision_action_result(event)
+            if not self._story_engine.is_waiting_color():
+                return
+
+            self._robot_comm.clear_color_events()
+            self._robot_comm.set_color_events_enabled(True)
+            self._state_manager.enter_waiting_color()
+            return
+
+        if state is AppState.WAITING_COLOR:
+            transition = self._story_engine.consume_color_event(event)
+            if transition.video_path is None:
+                return
+
+            self._robot_comm.set_color_events_enabled(False)
+            self._robot_comm.clear_color_events()
+            self._state_manager.start_system_playback(transition.video_path)
+            if transition.video_path.exists():
+                self._media_controller.start_video(transition.video_path)
+            else:
+                self._media_controller.start_mock_video(transition.mock_video_duration)
+            return
+
+        if state is AppState.WAITING_COCOVISION_RETURN_COMPLETION:
+            transition = self._story_engine.consume_cocovision_return_result(event)
+            if transition.video_path is None:
+                return
+
+            self._state_manager.start_system_playback(transition.video_path)
+            if transition.video_path.exists():
+                self._media_controller.start_video(transition.video_path)
+            else:
+                self._media_controller.start_mock_video(transition.mock_video_duration)
+
+    def _apply_fallback_video8_trigger(self, trigger_name: CameraTriggerName) -> None:
+        transition = self._story_engine.consume_video8_trigger(trigger_name)
+        if transition.video_path is None:
+            return
+
+        self._state_manager.start_system_playback(transition.video_path)
+        if transition.video_path.exists():
+            self._media_controller.start_video(transition.video_path)
+        else:
+            self._media_controller.start_mock_video(transition.mock_video_duration)
+
+    def _read_trigger_source(self, key_code: int, vision_inputs):
         return self._gesture_mapper.map_gesture(vision_inputs.gesture)
 
     def _read_video8_trigger_source(self, vision_inputs):

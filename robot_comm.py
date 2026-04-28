@@ -11,6 +11,9 @@ from config import (
     COCOMAG_BAUDRATE,
     COCOMAG_COMM_MODE,
     COCOMAG_PORT,
+    CENTRAL_FALLBACK_BAUDRATE,
+    CENTRAL_FALLBACK_PORT,
+    CENTRAL_FALLBACK_TRIGGER_LINE,
     COCOVISION_BAUDRATE,
     COCOVISION_COMM_MODE,
     COCOVISION_PORT,
@@ -37,16 +40,19 @@ class RobotEvent:
 class RobotComm:
     def __init__(self) -> None:
         self._events: Queue[RobotEvent] = Queue()
+        self._central_fallback_triggers: Queue[None] = Queue()
         self._timers: list[Timer] = []
         self._lock = Lock()
         self._serial_lock = Lock()
         self._reserved_ports: set[str] = set()
         self._connections: dict[str, object] = {"COCOMAG": None, "COCOVISION": None}
+        self._central_connection = None
         self._serial_threads: list[threading.Thread] = []
         self._serial_running = False
         self._accept_color_events = True
         self._connect_robot("COCOMAG")
         self._connect_robot("COCOVISION")
+        self._connect_central_fallback()
 
     def send_command(self, robot: str, command: str) -> None:
         if self._send_robot_command(robot, command):
@@ -71,6 +77,15 @@ class RobotComm:
             except Empty:
                 return events
 
+    def poll_central_fallback_triggers(self) -> int:
+        trigger_count = 0
+        while True:
+            try:
+                self._central_fallback_triggers.get_nowait()
+                trigger_count += 1
+            except Empty:
+                return trigger_count
+
     def set_color_events_enabled(self, enabled: bool) -> None:
         self._accept_color_events = enabled
 
@@ -94,6 +109,7 @@ class RobotComm:
         for thread in self._serial_threads:
             thread.join(timeout=1.0)
         self._serial_threads.clear()
+        self._disconnect_central_fallback()
         self._disconnect_robot("COCOMAG")
         self._disconnect_robot("COCOVISION")
 
@@ -167,13 +183,23 @@ class RobotComm:
                 raw_line = connection.readline()
             except serial.SerialException as exc:
                 print(f"[RobotComm] Erro de leitura de {source}: {exc}")
-                self._disconnect_robot(source)
+                if source == "CENTRAL_FALLBACK":
+                    self._disconnect_central_fallback()
+                else:
+                    self._disconnect_robot(source)
                 break
 
             if not raw_line:
                 continue
 
             message = raw_line.decode("utf-8", errors="ignore").strip()
+            if source == "CENTRAL_FALLBACK":
+                if message == CENTRAL_FALLBACK_TRIGGER_LINE:
+                    self._central_fallback_triggers.put(None)
+                elif message:
+                    print(f"[RobotComm] {source} respondeu: {message}")
+                continue
+
             if message.startswith("COCOVISION_COLOR="):
                 message = message.split("=", maxsplit=1)[1]
 
@@ -188,6 +214,46 @@ class RobotComm:
             elif message:
                 print(f"[RobotComm] {source} respondeu: {message}")
 
+    def _connect_central_fallback(self) -> None:
+        if serial is None:
+            return
+
+        if self._central_connection is not None:
+            return
+
+        port = os.environ.get("CENTRAL_FALLBACK_PORT") or CENTRAL_FALLBACK_PORT
+        if not port:
+            return
+
+        if port in self._reserved_ports:
+            print(
+                "[RobotComm] Porta do fallback central conflita com conexao ja reservada. "
+                "Fallback central desativado."
+            )
+            return
+
+        try:
+            connection = serial.Serial(port, CENTRAL_FALLBACK_BAUDRATE, timeout=0.1)
+            connection.reset_input_buffer()
+            connection.reset_output_buffer()
+            self._reserved_ports.add(port)
+            self._central_connection = connection
+        except serial.SerialException as exc:
+            print(f"[RobotComm] Falha ao abrir fallback central em {port}: {exc}")
+            self._central_connection = None
+            return
+
+        self._serial_running = True
+        serial_thread = threading.Thread(
+            target=self._serial_read_loop,
+            args=(connection, "CENTRAL_FALLBACK"),
+            name="central-fallback-reader",
+            daemon=True,
+        )
+        self._serial_threads.append(serial_thread)
+        serial_thread.start()
+        print(f"[RobotComm] fallback central conectado em {port}")
+
     def _disconnect_robot(self, robot: str) -> None:
         connection = self._connections[robot]
         if connection is None:
@@ -196,6 +262,14 @@ class RobotComm:
         self._reserved_ports.discard(connection.port)
         connection.close()
         self._connections[robot] = None
+
+    def _disconnect_central_fallback(self) -> None:
+        if self._central_connection is None:
+            return
+
+        self._reserved_ports.discard(self._central_connection.port)
+        self._central_connection.close()
+        self._central_connection = None
 
     def _resolve_robot_port(self, robot: str, mode: str) -> Optional[str]:
         env_port = os.environ.get(f"{robot}_PORT")
