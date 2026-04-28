@@ -19,6 +19,8 @@ constexpr int IN4 = 27;
 constexpr int SERVO_PIN = 13;
 constexpr int I2C_SDA_PIN = 21;
 constexpr int I2C_SCL_PIN = 22;
+constexpr int ULTRA_TRIG_PIN = 33;
+constexpr int ULTRA_ECHO_PIN = 32;
 constexpr bool MOTOR_A_INVERTED = false;
 constexpr bool MOTOR_B_INVERTED = true;
 
@@ -50,6 +52,10 @@ constexpr unsigned long GYRO_CALIBRATION_SAMPLES = 120;
 constexpr unsigned long GYRO_SAMPLE_DELAY_MS = 5;
 constexpr float GYRO_NOISE_FLOOR_DPS = 2.0f;
 constexpr unsigned long GYRO_DEBUG_LOG_INTERVAL_MS = 250;
+constexpr float ULTRA_TRIGGER_DISTANCE_CM = 6.0f;
+constexpr float ULTRA_RELEASE_DISTANCE_CM = 10.0f;
+constexpr unsigned long ULTRA_READ_INTERVAL_MS = 50;
+constexpr unsigned long ULTRA_PULSE_TIMEOUT_US = 25000UL;
 
 String serialBuffer;
 String bluetoothBuffer;
@@ -57,11 +63,21 @@ bool isPresenting = false;
 bool mpuReady = false;
 bool bluetoothReady = false;
 float gyroZBiasDps = 0.0f;
+unsigned long lastUltraReadAtMs = 0;
+bool ultraPresenceLatched = false;
 Servo actionServo;
 MPU6050 mpu;
 #if COCOMAG_BT_AVAILABLE
 BluetoothSerial SerialBT;
 #endif
+
+enum class LocalStage : uint8_t {
+  READY_FOR_PRESENT = 0,
+  READY_FOR_ACTION = 1,
+  COMPLETED = 2,
+};
+
+LocalStage localStage = LocalStage::READY_FOR_PRESENT;
 
 void setMotorA(bool forward, int speedValue);
 void setMotorB(bool forward, int speedValue);
@@ -72,8 +88,8 @@ void moveForward();
 void moveBackward();
 void turnRight();
 void stopMotors();
-void runPresentation();
-void runAction();
+bool runPresentation();
+bool runAction();
 void performPickupMotion();
 bool initializeMpu();
 bool calibrateGyroBias();
@@ -81,6 +97,10 @@ bool rotateDegrees(float targetDegrees);
 void handleCommand(const String& command);
 void readCommandStream(Stream& stream, String& buffer);
 void emitLine(const char* message);
+float readUltrasonicDistanceCm();
+void handleUltrasonicFallback();
+void executePresentationFrom(const char* origin);
+void executeActionFrom(const char* origin);
 
 void setup() {
   Serial.begin(115200);
@@ -102,6 +122,9 @@ void setup() {
   pinMode(ENB, OUTPUT);
   pinMode(IN3, OUTPUT);
   pinMode(IN4, OUTPUT);
+  pinMode(ULTRA_TRIG_PIN, OUTPUT);
+  pinMode(ULTRA_ECHO_PIN, INPUT);
+  digitalWrite(ULTRA_TRIG_PIN, LOW);
 
   stopMotors();
   actionServo.setPeriodHertz(50);
@@ -120,6 +143,7 @@ void loop() {
     readCommandStream(SerialBT, bluetoothBuffer);
   }
 #endif
+  handleUltrasonicFallback();
 }
 
 void handleCommand(const String& command) {
@@ -134,31 +158,72 @@ void handleCommand(const String& command) {
   Serial.println(normalized);
 
   if (isPresenting) {
+    Serial.println("COCOMAG_BT_IGNORED_BUSY");
     return;
   }
 
   if (normalized == "COCOMAG:PRESENT") {
-    isPresenting = true;
-    runPresentation();
-    isPresenting = false;
+    if (localStage == LocalStage::READY_FOR_PRESENT) {
+      executePresentationFrom("BT");
+    } else {
+      Serial.println("COCOMAG_BT_IGNORED_PRESENT");
+    }
     return;
   }
 
   if (normalized == "COCOMAG:ACTION") {
-    isPresenting = true;
-    runAction();
-    isPresenting = false;
+    if (localStage == LocalStage::READY_FOR_ACTION) {
+      executeActionFrom("BT");
+    } else {
+      Serial.println("COCOMAG_BT_IGNORED_ACTION");
+    }
   }
 }
 
-void runPresentation() {
+void executePresentationFrom(const char* origin) {
+  Serial.print("COCOMAG_");
+  Serial.print(origin);
+  Serial.println("_PRESENT");
+  isPresenting = true;
+  bool completed = runPresentation();
+  isPresenting = false;
+  if (completed) {
+    localStage = LocalStage::READY_FOR_ACTION;
+    return;
+  }
+
+  Serial.print("COCOMAG_");
+  Serial.print(origin);
+  Serial.println("_PRESENT_FAILED");
+}
+
+void executeActionFrom(const char* origin) {
+  Serial.print("COCOMAG_");
+  Serial.print(origin);
+  Serial.println("_ACTION");
+  isPresenting = true;
+  bool completed = runAction();
+  isPresenting = false;
+  if (completed) {
+    localStage = LocalStage::COMPLETED;
+    return;
+  }
+
+  Serial.print("COCOMAG_");
+  Serial.print(origin);
+  Serial.println("_ACTION_FAILED");
+}
+
+bool runPresentation() {
   moveForward();
   delay(PRESENT_FORWARD_MS);
 
   softStopDrive(true, true, MOVE_SPEED);
   delay(STOP_MS);
 
-  rotateDegrees(PRESENT_TARGET_DEGREES);
+  if (!rotateDegrees(PRESENT_TARGET_DEGREES)) {
+    return false;
+  }
   delay(STOP_MS);
 
   moveBackward();
@@ -168,16 +233,19 @@ void runPresentation() {
   delay(STOP_MS);
 
   emitLine("COCOMAG_DONE");
+  return true;
 }
 
-void runAction() {
+bool runAction() {
   moveForward();
   delay(ACTION_FORWARD_MS);
 
   softStopDrive(true, true, MOVE_SPEED);
   delay(STOP_MS);
 
-  rotateDegrees(ACTION_TURN_DEGREES);
+  if (!rotateDegrees(ACTION_TURN_DEGREES)) {
+    return false;
+  }
   delay(STOP_MS);
 
   moveForward();
@@ -187,6 +255,7 @@ void runAction() {
   delay(STOP_MS);
 
   emitLine("COCOMAG_DONE");
+  return true;
 }
 
 void performPickupMotion() {
@@ -345,6 +414,58 @@ void rampDrive(bool motorAForward, bool motorBForward, int targetSpeed) {
     applyDrive(motorAForward, speedValue, motorBForward, speedValue);
     delay(RAMP_STEP_DELAY_MS);
   }
+}
+
+float readUltrasonicDistanceCm() {
+  digitalWrite(ULTRA_TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(ULTRA_TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(ULTRA_TRIG_PIN, LOW);
+
+  unsigned long pulseDurationUs = pulseIn(ULTRA_ECHO_PIN, HIGH, ULTRA_PULSE_TIMEOUT_US);
+  if (pulseDurationUs == 0) {
+    return -1.0f;
+  }
+
+  return pulseDurationUs / 58.0f;
+}
+
+void handleUltrasonicFallback() {
+  if (isPresenting) {
+    return;
+  }
+
+  unsigned long nowMs = millis();
+  if (nowMs - lastUltraReadAtMs < ULTRA_READ_INTERVAL_MS) {
+    return;
+  }
+  lastUltraReadAtMs = nowMs;
+
+  float distanceCm = readUltrasonicDistanceCm();
+  bool triggerActive = distanceCm > 0.0f && distanceCm <= ULTRA_TRIGGER_DISTANCE_CM;
+  bool releaseActive = distanceCm < 0.0f || distanceCm >= ULTRA_RELEASE_DISTANCE_CM;
+
+  if (releaseActive) {
+    ultraPresenceLatched = false;
+  }
+
+  if (!triggerActive || ultraPresenceLatched) {
+    return;
+  }
+  ultraPresenceLatched = true;
+
+  if (localStage == LocalStage::READY_FOR_PRESENT) {
+    executePresentationFrom("ULTRA");
+    return;
+  }
+
+  if (localStage == LocalStage::READY_FOR_ACTION) {
+    executeActionFrom("ULTRA");
+    return;
+  }
+
+  Serial.println("ULTRA_IGNORED_COMPLETED");
 }
 
 void softStopDrive(bool motorAForward, bool motorBForward, int currentSpeed) {
