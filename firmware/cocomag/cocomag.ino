@@ -46,12 +46,14 @@ constexpr unsigned long SERVO_LOWER_DURATION_MS = 1800;
 constexpr unsigned long SERVO_PICKUP_HOLD_MS = 1000;
 constexpr float GYRO_Z_LSB_PER_DPS = 131.0f;
 constexpr float PRESENT_TARGET_DEGREES = 360.0f;
-constexpr float GYRO_ANGLE_SCALE = 0.75f;
+constexpr float GYRO_ANGLE_SCALE = 1.0f;
 constexpr unsigned long ROTATION_TIMEOUT_MS = 6000;
 constexpr unsigned long GYRO_CALIBRATION_SAMPLES = 120;
 constexpr unsigned long GYRO_SAMPLE_DELAY_MS = 5;
 constexpr float GYRO_NOISE_FLOOR_DPS = 2.0f;
 constexpr unsigned long GYRO_DEBUG_LOG_INTERVAL_MS = 250;
+constexpr float ROTATION_SLOWDOWN_WINDOW_DEGREES = 45.0f;
+constexpr int TURN_SLOW_SPEED = 140;
 constexpr float ULTRA_TRIGGER_DISTANCE_CM = 6.0f;
 constexpr float ULTRA_RELEASE_DISTANCE_CM = 10.0f;
 constexpr unsigned long ULTRA_READ_INTERVAL_MS = 50;
@@ -87,6 +89,7 @@ void softStopDrive(bool motorAForward, bool motorBForward, int currentSpeed);
 void moveForward();
 void moveBackward();
 void turnRight();
+void turnRightAtSpeed(int speedValue);
 void stopMotors();
 bool runPresentation();
 bool runAction();
@@ -312,7 +315,10 @@ bool rotateDegrees(float targetDegrees) {
   unsigned long lastSampleAt = micros();
   unsigned long lastDebugLogAt = millis();
   float accumulatedDegrees = 0.0f;
+  int currentTurnSpeed = TURN_SPEED;
 
+  Serial.print("ROTATION_START target=");
+  Serial.println(targetDegrees, 1);
   turnRight();
   while (accumulatedDegrees < targetDegrees) {
     unsigned long nowMicros = micros();
@@ -325,28 +331,40 @@ bool rotateDegrees(float targetDegrees) {
       accumulatedDegrees += deltaDegrees;
     }
 
+    float remainingDegrees = targetDegrees - accumulatedDegrees;
+    if (currentTurnSpeed == TURN_SPEED && remainingDegrees <= ROTATION_SLOWDOWN_WINDOW_DEGREES) {
+      currentTurnSpeed = TURN_SLOW_SPEED;
+      turnRightAtSpeed(currentTurnSpeed);
+    }
+
     if (millis() - lastDebugLogAt >= GYRO_DEBUG_LOG_INTERVAL_MS) {
       lastDebugLogAt = millis();
-      Serial.print("COCOMAG_MPU_Z_DPS=");
-      Serial.print(gyroZDps, 1);
-      Serial.print(" DT_MS=");
-      Serial.print(deltaSeconds * 1000.0f, 1);
-      Serial.print(" ANGLE=");
+      Serial.print("ROTATION_PROGRESS angle=");
       Serial.print(accumulatedDegrees, 1);
-      Serial.print(" TARGET=");
-      Serial.println(targetDegrees, 1);
+      Serial.print(" gyroZ=");
+      Serial.println(gyroZDps, 1);
     }
 
     if (millis() - startedAt > ROTATION_TIMEOUT_MS) {
-      softStopDrive(true, false, TURN_SPEED);
+      softStopDrive(true, false, currentTurnSpeed);
+      Serial.print("ROTATION_TIMEOUT angle=");
+      Serial.print(accumulatedDegrees, 1);
+      Serial.print(" target=");
+      Serial.print(targetDegrees, 1);
+      Serial.print(" elapsed=");
+      Serial.println(millis() - startedAt);
       emitLine("COCOMAG_MPU_ROTATION_TIMEOUT");
+      Serial.println("ROTATION_STOP");
       return false;
     }
 
     delay(2);
   }
 
-  softStopDrive(true, false, TURN_SPEED);
+  Serial.print("ROTATION_REACHED angle=");
+  Serial.println(accumulatedDegrees, 1);
+  softStopDrive(true, false, currentTurnSpeed);
+  Serial.println("ROTATION_STOP");
   Serial.print("COCOMAG_MPU_ROTATION_DEGREES=");
   Serial.println(accumulatedDegrees, 1);
 #if COCOMAG_BT_AVAILABLE
@@ -392,6 +410,10 @@ void moveBackward() {
 
 void turnRight() {
   rampDrive(true, false, TURN_SPEED);
+}
+
+void turnRightAtSpeed(int speedValue) {
+  applyDrive(true, speedValue, false, speedValue);
 }
 
 void stopMotors() {
