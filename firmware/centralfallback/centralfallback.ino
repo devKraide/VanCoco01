@@ -1,8 +1,8 @@
 constexpr int TRIG_PIN = 9;
 constexpr int ECHO_PIN = 10;
 
-constexpr float TRIGGER_DISTANCE_CM = 6.0f;
-constexpr float RELEASE_DISTANCE_CM = 10.0f;
+constexpr float TRIGGER_DISTANCE_CM = 15.0f;
+constexpr float RELEASE_DISTANCE_CM = 20.0f;
 constexpr unsigned long READ_INTERVAL_MS = 50;
 constexpr unsigned long SERIAL_BAUD = 115200;
 constexpr unsigned long PULSE_TIMEOUT_US = 25000UL;

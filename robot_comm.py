@@ -17,6 +17,8 @@ from config import (
     COCOVISION_BAUDRATE,
     COCOVISION_COMM_MODE,
     COCOVISION_PORT,
+    MOCK_ROBOTS,
+    PRESENTATION_MODE,
 )
 
 try:
@@ -58,11 +60,18 @@ class RobotComm:
         if self._send_robot_command(robot, command):
             return
 
+        if not self._mock_robots_enabled():
+            print(
+                f"[RobotComm] {robot} sem resposta/conexao. "
+                "Aguardando evento real ou CENTRAL_FALLBACK_TRIGGER."
+            )
+            return
+
         delay_seconds = 2.0 if robot == "COCOMAG" else 2.8
         timer = Timer(
             delay_seconds,
-            self._emit_event,
-            args=(RobotEvent(robot=robot, status="DONE"),),
+            self._emit_mock_done,
+            args=(robot,),
         )
         timer.daemon = True
         with self._lock:
@@ -105,6 +114,11 @@ class RobotComm:
             self._events.put(event)
 
     def close(self) -> None:
+        with self._lock:
+            for timer in self._timers:
+                timer.cancel()
+            self._timers.clear()
+
         self._serial_running = False
         for thread in self._serial_threads:
             thread.join(timeout=1.0)
@@ -116,9 +130,22 @@ class RobotComm:
     def _emit_event(self, event: RobotEvent) -> None:
         self._events.put(event)
 
+    def _emit_mock_done(self, robot: str) -> None:
+        print(f"[RobotComm] MOCK_ROBOT_DONE: {robot}_DONE")
+        self._emit_event(RobotEvent(robot=robot, status="DONE"))
+
+    def _mock_robots_enabled(self) -> bool:
+        return MOCK_ROBOTS and not PRESENTATION_MODE
+
     def _connect_robot(self, robot: str) -> None:
         if serial is None:
-            print(f"[RobotComm] pyserial nao instalado. {robot} ficara em modo mock.")
+            if self._mock_robots_enabled():
+                print(f"[RobotComm] pyserial nao instalado. {robot} ficara em modo mock.")
+            else:
+                print(
+                    f"[RobotComm] pyserial nao instalado. {robot} indisponivel; "
+                    "mock automatico desativado."
+                )
             return
 
         if self._connections[robot] is not None:
@@ -129,7 +156,7 @@ class RobotComm:
         if port is None:
             print(
                 f"[RobotComm] Porta de {robot} nao encontrada para modo {mode}. "
-                "Usando fallback mock."
+                "Mock automatico desativado."
             )
             return
 
@@ -163,7 +190,10 @@ class RobotComm:
             connection = self._connections[robot]
 
         if connection is None:
-            print(f"[RobotComm] {robot} indisponivel. Usando fallback mock.")
+            if self._mock_robots_enabled():
+                print(f"[RobotComm] {robot} indisponivel. Usando mock explicito.")
+            else:
+                print(f"[RobotComm] {robot} indisponivel. Mock automatico desativado.")
             return False
 
         try:
