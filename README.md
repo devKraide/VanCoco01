@@ -76,12 +76,80 @@ video9b.mp4
 
 ## Rodar por Bluetooth RFCOMM
 
+Use este roteiro sempre que ligar o PC/robos e quiser rodar o projeto via Bluetooth.
+Os ESP32 ja precisam estar pareados.
+
+### 1. Descobrir os MACs pareados
+
 ```bash
-sudo rfcomm bind /dev/rfcomm0 XX:XX:XX:XX:XX:XX 1 //ignorar isso 
-sudo rfcomm bind /dev/rfcomm1 YY:YY:YY:YY:YY:YY 1 //ignorar isso
-export COCOMAG_PORT=/dev/rfcomm0    // alterar isso conforme a ordem da conexão com o bluetooth -> se for primeiro = 0, senão = 1
+bluetoothctl devices Paired
+```
+
+Anote os MACs de:
+
+```text
+COCOMAG    -> XX:XX:XX:XX:XX:XX
+COCOVISION -> YY:YY:YY:YY:YY:YY
+```
+
+### 2. Liberar binds antigos
+
+Se as portas ja existirem ou se voce estiver repetindo a execucao, libere antes:
+
+```bash
+sudo rfcomm release /dev/rfcomm0
+sudo rfcomm release /dev/rfcomm1
+```
+
+Se aparecer erro dizendo que a porta nao existe, pode ignorar.
+
+### 3. Criar as portas RFCOMM
+
+Padrao recomendado:
+
+- CocoMag em `/dev/rfcomm0`
+- CocoVision em `/dev/rfcomm1`
+
+```bash
+sudo rfcomm bind /dev/rfcomm0 XX:XX:XX:XX:XX:XX 1
+sudo rfcomm bind /dev/rfcomm1 YY:YY:YY:YY:YY:YY 1
+```
+
+Troque `XX:XX:XX:XX:XX:XX` pelo MAC do CocoMag e `YY:YY:YY:YY:YY:YY` pelo MAC do CocoVision.
+
+### 4. Validar se as portas apareceram
+
+```bash
+ls -l /dev/rfcomm0 /dev/rfcomm1
+```
+
+### 5. Rodar o projeto
+
+```bash
+export COCOMAG_PORT=/dev/rfcomm0
 export COCOVISION_PORT=/dev/rfcomm1
-source .venv/bin/activate && python main.py
+source .venv/bin/activate
+python main.py
+```
+
+Logs esperados quando o Bluetooth estiver funcionando:
+
+```text
+[RobotComm] COCOMAG conectado via rfcomm em /dev/rfcomm0
+[RobotComm] COCOVISION conectado via rfcomm em /dev/rfcomm1
+```
+
+### Comando compacto para repetir depois de saber os MACs
+
+```bash
+sudo rfcomm release /dev/rfcomm0
+sudo rfcomm release /dev/rfcomm1
+sudo rfcomm bind /dev/rfcomm0 XX:XX:XX:XX:XX:XX 1
+sudo rfcomm bind /dev/rfcomm1 YY:YY:YY:YY:YY:YY 1
+export COCOMAG_PORT=/dev/rfcomm0
+export COCOVISION_PORT=/dev/rfcomm1
+source .venv/bin/activate
+python main.py
 ```
 
 ## Testar comandos isolados
