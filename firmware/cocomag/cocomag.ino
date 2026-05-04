@@ -19,6 +19,8 @@ constexpr int IN4 = 27;
 constexpr int SERVO_PIN = 13;
 constexpr int I2C_SDA_PIN = 21;
 constexpr int I2C_SCL_PIN = 22;
+constexpr int ULTRA_TRIG_PIN = 33;
+constexpr int ULTRA_ECHO_PIN = 32;
 constexpr bool MOTOR_A_INVERTED = false;
 constexpr bool MOTOR_B_INVERTED = true;
 
@@ -45,23 +47,47 @@ constexpr unsigned long SERVO_PICKUP_HOLD_MS = 1000;
 constexpr float GYRO_Z_LSB_PER_DPS = 131.0f;
 constexpr float PRESENT_TARGET_DEGREES = 360.0f;
 constexpr float GYRO_ANGLE_SCALE = 0.75f;
+constexpr float ROTATION_COMPLETION_TOLERANCE_DEGREES = 3.0f;
 constexpr unsigned long ROTATION_TIMEOUT_MS = 6000;
+constexpr unsigned long PRESENT_ROTATION_TIMEOUT_MS = 12000;
+constexpr unsigned long GYRO_STATIONARY_DIAGNOSTIC_MS = 1000;
 constexpr unsigned long GYRO_CALIBRATION_SAMPLES = 120;
 constexpr unsigned long GYRO_SAMPLE_DELAY_MS = 5;
 constexpr float GYRO_NOISE_FLOOR_DPS = 2.0f;
 constexpr unsigned long GYRO_DEBUG_LOG_INTERVAL_MS = 250;
+constexpr unsigned long GYRO_STATIONARY_LOG_INTERVAL_MS = 250;
+constexpr float ULTRA_TRIGGER_DISTANCE_CM = 6.0f;
+constexpr float ULTRA_RELEASE_DISTANCE_CM = 10.0f;
+constexpr unsigned long ULTRA_READ_INTERVAL_MS = 50;
+constexpr unsigned long ULTRA_PULSE_TIMEOUT_US = 25000UL;
 
-String serialBuffer;
 String bluetoothBuffer;
 bool isPresenting = false;
+bool resetRequested = false;
 bool mpuReady = false;
 bool bluetoothReady = false;
 float gyroZBiasDps = 0.0f;
+unsigned long lastUltraReadAtMs = 0;
+bool ultraPresenceLatched = false;
 Servo actionServo;
 MPU6050 mpu;
 #if COCOMAG_BT_AVAILABLE
 BluetoothSerial SerialBT;
 #endif
+
+enum class LocalStage : uint8_t {
+  READY_FOR_PRESENT = 0,
+  READY_FOR_ACTION = 1,
+  COMPLETED = 2,
+};
+
+enum class RequestedCommand : uint8_t {
+  ANY = 0,
+  PRESENT = 1,
+  ACTION = 2,
+};
+
+LocalStage localStage = LocalStage::READY_FOR_PRESENT;
 
 void setMotorA(bool forward, int speedValue);
 void setMotorB(bool forward, int speedValue);
@@ -71,16 +97,31 @@ void softStopDrive(bool motorAForward, bool motorBForward, int currentSpeed);
 void moveForward();
 void moveBackward();
 void turnRight();
+void turnRightAtSpeed(int speedValue);
 void stopMotors();
-void runPresentation();
-void runAction();
+bool runPresentation();
+bool runAction();
 void performPickupMotion();
 bool initializeMpu();
 bool calibrateGyroBias();
 bool rotateDegrees(float targetDegrees);
+bool rotateDegrees(float targetDegrees, unsigned long timeoutMs, bool logStationaryDiagnostic);
+void logStationaryGyro(unsigned long durationMs);
 void handleCommand(const String& command);
 void readCommandStream(Stream& stream, String& buffer);
 void emitLine(const char* message);
+const char* stageToString(LocalStage stage);
+void handleTrigger(const char* source, RequestedCommand requestedCommand);
+void logIgnoredTrigger(const char* source);
+void handleResetCommand();
+bool applyReset();
+bool pollBluetoothCommands();
+bool delayWithReset(unsigned long durationMs);
+bool shouldAbortForReset();
+float readUltrasonicDistanceCm();
+void handleUltrasonicFallback();
+void executePresentationFrom(const char* origin);
+void executeActionFrom(const char* origin);
 
 void setup() {
   Serial.begin(115200);
@@ -102,6 +143,9 @@ void setup() {
   pinMode(ENB, OUTPUT);
   pinMode(IN3, OUTPUT);
   pinMode(IN4, OUTPUT);
+  pinMode(ULTRA_TRIG_PIN, OUTPUT);
+  pinMode(ULTRA_ECHO_PIN, INPUT);
+  digitalWrite(ULTRA_TRIG_PIN, LOW);
 
   stopMotors();
   actionServo.setPeriodHertz(50);
@@ -114,12 +158,15 @@ void setup() {
 }
 
 void loop() {
-  readCommandStream(Serial, serialBuffer);
+  while (Serial.available() > 0) {
+    Serial.read();
+  }
 #if COCOMAG_BT_AVAILABLE
   if (bluetoothReady) {
     readCommandStream(SerialBT, bluetoothBuffer);
   }
 #endif
+  handleUltrasonicFallback();
 }
 
 void handleCommand(const String& command) {
@@ -133,60 +180,271 @@ void handleCommand(const String& command) {
   Serial.print("COCOMAG_CMD=");
   Serial.println(normalized);
 
-  if (isPresenting) {
-    return;
-  }
-
   if (normalized == "COCOMAG:PRESENT") {
-    isPresenting = true;
-    runPresentation();
-    isPresenting = false;
+    handleTrigger("BT", RequestedCommand::PRESENT);
     return;
   }
 
   if (normalized == "COCOMAG:ACTION") {
-    isPresenting = true;
-    runAction();
-    isPresenting = false;
+    handleTrigger("BT", RequestedCommand::ACTION);
+    return;
+  }
+
+  if (normalized == "COCOMAG:RESET") {
+    handleResetCommand();
   }
 }
 
-void runPresentation() {
-  moveForward();
-  delay(PRESENT_FORWARD_MS);
+const char* stageToString(LocalStage stage) {
+  switch (stage) {
+    case LocalStage::READY_FOR_PRESENT:
+      return "READY_FOR_PRESENT";
+    case LocalStage::READY_FOR_ACTION:
+      return "READY_FOR_ACTION";
+    case LocalStage::COMPLETED:
+      return "COMPLETED";
+  }
 
-  softStopDrive(true, true, MOVE_SPEED);
-  delay(STOP_MS);
-
-  rotateDegrees(PRESENT_TARGET_DEGREES);
-  delay(STOP_MS);
-
-  moveBackward();
-  delay(PRESENT_BACKWARD_MS);
-
-  softStopDrive(false, false, MOVE_SPEED);
-  delay(STOP_MS);
-
-  emitLine("COCOMAG_DONE");
+  return "UNKNOWN";
 }
 
-void runAction() {
+void logIgnoredTrigger(const char* source) {
+  Serial.print(source);
+  Serial.print("_IGNORED_STATE=");
+  Serial.println(stageToString(localStage));
+}
+
+void handleTrigger(const char* source, RequestedCommand requestedCommand) {
+  Serial.print("STATE_CURRENT=");
+  Serial.println(stageToString(localStage));
+  Serial.print("INPUT_SOURCE=");
+  Serial.println(source);
+
+  if (isPresenting) {
+    logIgnoredTrigger(source);
+    return;
+  }
+
+  if (localStage == LocalStage::READY_FOR_PRESENT) {
+    if (requestedCommand == RequestedCommand::ACTION) {
+      logIgnoredTrigger(source);
+      return;
+    }
+
+    executePresentationFrom(source);
+    return;
+  }
+
+  if (localStage == LocalStage::READY_FOR_ACTION) {
+    if (requestedCommand == RequestedCommand::PRESENT) {
+      logIgnoredTrigger(source);
+      return;
+    }
+
+    executeActionFrom(source);
+    return;
+  }
+
+  logIgnoredTrigger(source);
+}
+
+void handleResetCommand() {
+  Serial.println("RESET_RECEIVED");
+  bool resetCompleted = applyReset();
+  if (resetCompleted) {
+    emitLine("COCOMAG_RESET_DONE");
+    Serial.println("RESET_DONE_SENT");
+    return;
+  }
+
+  emitLine("COCOMAG_RESET_REQUESTED");
+  Serial.println("RESET_REQUESTED_SENT");
+}
+
+bool applyReset() {
+  stopMotors();
+  ultraPresenceLatched = false;
+
+  if (isPresenting) {
+    resetRequested = true;
+    Serial.println("RESET_ABORT_REQUESTED");
+    Serial.println("RESET_APPLIED");
+    return false;
+  }
+
+  resetRequested = false;
+  isPresenting = false;
+  localStage = LocalStage::READY_FOR_PRESENT;
+  Serial.println("RESET_APPLIED");
+  return true;
+}
+
+bool pollBluetoothCommands() {
+#if COCOMAG_BT_AVAILABLE
+  if (bluetoothReady) {
+    readCommandStream(SerialBT, bluetoothBuffer);
+  }
+#endif
+  return resetRequested;
+}
+
+bool delayWithReset(unsigned long durationMs) {
+  unsigned long startedAt = millis();
+  while (millis() - startedAt < durationMs) {
+    if (pollBluetoothCommands()) {
+      stopMotors();
+      return false;
+    }
+    delay(5);
+  }
+
+  return true;
+}
+
+bool shouldAbortForReset() {
+  if (!resetRequested) {
+    pollBluetoothCommands();
+  }
+
+  if (!resetRequested) {
+    return false;
+  }
+
+  stopMotors();
+  return true;
+}
+
+void executePresentationFrom(const char* origin) {
+  Serial.print("COCOMAG_");
+  Serial.print(origin);
+  Serial.println("_PRESENT");
+  resetRequested = false;
+  isPresenting = true;
+  bool completed = runPresentation();
+  isPresenting = false;
+  if (resetRequested) {
+    Serial.println("PRESENT_ABORTED_BY_RESET");
+    resetRequested = false;
+    localStage = LocalStage::READY_FOR_PRESENT;
+    emitLine("COCOMAG_RESET_DONE");
+    Serial.println("RESET_DONE_SENT");
+    return;
+  }
+
+  if (completed) {
+    Serial.println("STATE_CHANGE READY_FOR_PRESENT -> READY_FOR_ACTION");
+    localStage = LocalStage::READY_FOR_ACTION;
+    return;
+  }
+
+  Serial.print("COCOMAG_");
+  Serial.print(origin);
+  Serial.println("_PRESENT_FAILED");
+}
+
+void executeActionFrom(const char* origin) {
+  Serial.print("COCOMAG_");
+  Serial.print(origin);
+  Serial.println("_ACTION");
+  resetRequested = false;
+  isPresenting = true;
+  bool completed = runAction();
+  isPresenting = false;
+  if (resetRequested) {
+    Serial.println("ACTION_ABORTED_BY_RESET");
+    resetRequested = false;
+    localStage = LocalStage::READY_FOR_PRESENT;
+    emitLine("COCOMAG_RESET_DONE");
+    Serial.println("RESET_DONE_SENT");
+    return;
+  }
+
+  if (completed) {
+    Serial.println("STATE_CHANGE READY_FOR_ACTION -> COMPLETED");
+    localStage = LocalStage::COMPLETED;
+    return;
+  }
+
+  Serial.print("COCOMAG_");
+  Serial.print(origin);
+  Serial.println("_ACTION_FAILED");
+}
+
+bool runPresentation() {
+  Serial.println("PRESENT_START");
+  Serial.println("PRESENT_FORWARD_START");
   moveForward();
-  delay(ACTION_FORWARD_MS);
+  if (!delayWithReset(PRESENT_FORWARD_MS)) {
+    return false;
+  }
+  Serial.println("PRESENT_FORWARD_END");
 
   softStopDrive(true, true, MOVE_SPEED);
-  delay(STOP_MS);
+  if (!delayWithReset(STOP_MS)) {
+    return false;
+  }
 
-  rotateDegrees(ACTION_TURN_DEGREES);
-  delay(STOP_MS);
+  Serial.println("PRESENT_ROTATION_START");
+  if (!rotateDegrees(PRESENT_TARGET_DEGREES, PRESENT_ROTATION_TIMEOUT_MS, true)) {
+    if (resetRequested) {
+      return false;
+    }
+    Serial.println("PRESENT_ROTATION_FAILED_CONTINUING");
+  }
+  Serial.println("PRESENT_ROTATION_END");
+  if (!delayWithReset(STOP_MS)) {
+    return false;
+  }
 
-  moveForward();
-  delay(ACTION_POST_TURN_FORWARD_MS);
+  Serial.println("PRESENT_BACKWARD_START");
+  moveBackward();
+  if (!delayWithReset(PRESENT_BACKWARD_MS)) {
+    return false;
+  }
+  Serial.println("PRESENT_BACKWARD_END");
 
-  softStopDrive(true, true, MOVE_SPEED);
-  delay(STOP_MS);
+  softStopDrive(false, false, MOVE_SPEED);
+  if (!delayWithReset(STOP_MS)) {
+    return false;
+  }
 
   emitLine("COCOMAG_DONE");
+  Serial.println("PRESENT_DONE_SENT");
+  return true;
+}
+
+bool runAction() {
+  Serial.println("ACTION_START");
+  moveForward();
+  if (!delayWithReset(ACTION_FORWARD_MS)) {
+    return false;
+  }
+
+  softStopDrive(true, true, MOVE_SPEED);
+  if (!delayWithReset(STOP_MS)) {
+    return false;
+  }
+
+  if (!rotateDegrees(ACTION_TURN_DEGREES)) {
+    return false;
+  }
+  if (!delayWithReset(STOP_MS)) {
+    return false;
+  }
+
+  moveForward();
+  if (!delayWithReset(ACTION_POST_TURN_FORWARD_MS)) {
+    return false;
+  }
+
+  softStopDrive(true, true, MOVE_SPEED);
+  if (!delayWithReset(STOP_MS)) {
+    return false;
+  }
+
+  emitLine("COCOMAG_DONE");
+  Serial.println("ACTION_DONE_SENT");
+  return true;
 }
 
 void performPickupMotion() {
@@ -219,7 +477,9 @@ bool calibrateGyroBias() {
   long accumulatedZ = 0;
   for (unsigned long index = 0; index < GYRO_CALIBRATION_SAMPLES; ++index) {
     accumulatedZ += mpu.getRotationZ();
-    delay(GYRO_SAMPLE_DELAY_MS);
+    if (!delayWithReset(GYRO_SAMPLE_DELAY_MS)) {
+      return false;
+    }
   }
 
   gyroZBiasDps = (accumulatedZ / static_cast<float>(GYRO_CALIBRATION_SAMPLES)) / GYRO_Z_LSB_PER_DPS;
@@ -227,28 +487,62 @@ bool calibrateGyroBias() {
 }
 
 bool rotateDegrees(float targetDegrees) {
+  return rotateDegrees(targetDegrees, ROTATION_TIMEOUT_MS, false);
+}
+
+bool rotateDegrees(float targetDegrees, unsigned long timeoutMs, bool logStationaryDiagnostic) {
   if (!mpuReady) {
     emitLine("COCOMAG_MPU_UNAVAILABLE");
     return false;
   }
 
   stopMotors();
-  delay(STOP_MS);
+  if (!delayWithReset(STOP_MS)) {
+    return false;
+  }
+  if (logStationaryDiagnostic) {
+    logStationaryGyro(GYRO_STATIONARY_DIAGNOSTIC_MS);
+    if (resetRequested) {
+      return false;
+    }
+  }
+
   if (!calibrateGyroBias()) {
     emitLine("COCOMAG_MPU_RECALIBRATION_FAILED");
     return false;
   }
+  Serial.print("GYRO_Z_BIAS_DPS=");
+  Serial.println(gyroZBiasDps, 4);
 
   unsigned long startedAt = millis();
   unsigned long lastSampleAt = micros();
   unsigned long lastDebugLogAt = millis();
   float accumulatedDegrees = 0.0f;
+  float completionTargetDegrees = targetDegrees - ROTATION_COMPLETION_TOLERANCE_DEGREES;
+  if (completionTargetDegrees < 0.0f) {
+    completionTargetDegrees = 0.0f;
+  }
 
-  turnRight();
-  while (accumulatedDegrees < targetDegrees) {
+  Serial.print("ROTATION_START target=");
+  Serial.println(targetDegrees, 1);
+  Serial.print("ROTATION_TIMEOUT_MS=");
+  Serial.println(timeoutMs);
+  Serial.print("ROTATION_COMPLETION_TARGET=");
+  Serial.println(completionTargetDegrees, 1);
+  Serial.println("ROTATION_ANGLE_RESET=0.0");
+  Serial.print("MOTOR_SPIN_START left=FORWARD right=BACKWARD speed=");
+  Serial.println(TURN_SPEED);
+  turnRightAtSpeed(TURN_SPEED);
+  while (accumulatedDegrees < completionTargetDegrees) {
+    if (shouldAbortForReset()) {
+      Serial.println("ROTATION_ABORTED_BY_RESET");
+      return false;
+    }
+
     unsigned long nowMicros = micros();
     float deltaSeconds = (nowMicros - lastSampleAt) / 1000000.0f;
     lastSampleAt = nowMicros;
+    unsigned long elapsedMs = millis() - startedAt;
 
     float gyroZDps = (mpu.getRotationZ() / GYRO_Z_LSB_PER_DPS) - gyroZBiasDps;
     if (fabsf(gyroZDps) >= GYRO_NOISE_FLOOR_DPS) {
@@ -258,26 +552,46 @@ bool rotateDegrees(float targetDegrees) {
 
     if (millis() - lastDebugLogAt >= GYRO_DEBUG_LOG_INTERVAL_MS) {
       lastDebugLogAt = millis();
-      Serial.print("COCOMAG_MPU_Z_DPS=");
-      Serial.print(gyroZDps, 1);
-      Serial.print(" DT_MS=");
-      Serial.print(deltaSeconds * 1000.0f, 1);
-      Serial.print(" ANGLE=");
+      Serial.print("ROTATION_PROGRESS angle=");
       Serial.print(accumulatedDegrees, 1);
-      Serial.print(" TARGET=");
-      Serial.println(targetDegrees, 1);
+      Serial.print(" gyroZ=");
+      Serial.print(gyroZDps, 2);
+      Serial.print(" dt=");
+      Serial.print(deltaSeconds, 4);
+      Serial.print(" elapsed=");
+      Serial.println(elapsedMs);
     }
 
-    if (millis() - startedAt > ROTATION_TIMEOUT_MS) {
-      softStopDrive(true, false, TURN_SPEED);
+    if (elapsedMs > timeoutMs) {
+      stopMotors();
+      Serial.println("MOTOR_STOP");
+      Serial.print("ROTATION_TIMEOUT angle=");
+      Serial.print(accumulatedDegrees, 1);
+      Serial.print(" target=");
+      Serial.print(targetDegrees, 1);
+      Serial.print(" elapsed=");
+      Serial.println(elapsedMs);
+      if (accumulatedDegrees >= completionTargetDegrees) {
+        Serial.println("ROTATION_REACHED_BY_TOLERANCE");
+        Serial.println("ROTATION_STOP_REASON=TARGET_REACHED");
+        Serial.println("ROTATION_STOP");
+        return true;
+      }
       emitLine("COCOMAG_MPU_ROTATION_TIMEOUT");
+      Serial.println("ROTATION_STOP_REASON=TIMEOUT");
+      Serial.println("ROTATION_STOP");
       return false;
     }
 
     delay(2);
   }
 
-  softStopDrive(true, false, TURN_SPEED);
+  Serial.print("ROTATION_REACHED angle=");
+  Serial.println(accumulatedDegrees, 1);
+  stopMotors();
+  Serial.println("MOTOR_STOP");
+  Serial.println("ROTATION_STOP_REASON=TARGET_REACHED");
+  Serial.println("ROTATION_STOP");
   Serial.print("COCOMAG_MPU_ROTATION_DEGREES=");
   Serial.println(accumulatedDegrees, 1);
 #if COCOMAG_BT_AVAILABLE
@@ -287,6 +601,32 @@ bool rotateDegrees(float targetDegrees) {
   }
 #endif
   return true;
+}
+
+void logStationaryGyro(unsigned long durationMs) {
+  Serial.print("GYRO_STATIONARY_DIAGNOSTIC_START duration=");
+  Serial.println(durationMs);
+  unsigned long startedAt = millis();
+  unsigned long lastLogAt = 0;
+  while (millis() - startedAt < durationMs) {
+    if (shouldAbortForReset()) {
+      return;
+    }
+
+    unsigned long nowMs = millis();
+    if (lastLogAt == 0 || nowMs - lastLogAt >= GYRO_STATIONARY_LOG_INTERVAL_MS) {
+      lastLogAt = nowMs;
+      float rawGyroZDps = mpu.getRotationZ() / GYRO_Z_LSB_PER_DPS;
+      Serial.print("GYRO_STATIONARY gyroZ=");
+      Serial.print(rawGyroZDps, 4);
+      Serial.print(" elapsed=");
+      Serial.println(nowMs - startedAt);
+    }
+    if (!delayWithReset(5)) {
+      return;
+    }
+  }
+  Serial.println("GYRO_STATIONARY_DIAGNOSTIC_END");
 }
 
 void readCommandStream(Stream& stream, String& buffer) {
@@ -325,6 +665,10 @@ void turnRight() {
   rampDrive(true, false, TURN_SPEED);
 }
 
+void turnRightAtSpeed(int speedValue) {
+  applyDrive(true, speedValue, false, speedValue);
+}
+
 void stopMotors() {
   analogWrite(ENA, 0);
   analogWrite(ENB, 0);
@@ -345,6 +689,48 @@ void rampDrive(bool motorAForward, bool motorBForward, int targetSpeed) {
     applyDrive(motorAForward, speedValue, motorBForward, speedValue);
     delay(RAMP_STEP_DELAY_MS);
   }
+}
+
+float readUltrasonicDistanceCm() {
+  digitalWrite(ULTRA_TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(ULTRA_TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(ULTRA_TRIG_PIN, LOW);
+
+  unsigned long pulseDurationUs = pulseIn(ULTRA_ECHO_PIN, HIGH, ULTRA_PULSE_TIMEOUT_US);
+  if (pulseDurationUs == 0) {
+    return -1.0f;
+  }
+
+  return pulseDurationUs / 58.0f;
+}
+
+void handleUltrasonicFallback() {
+  if (isPresenting) {
+    return;
+  }
+
+  unsigned long nowMs = millis();
+  if (nowMs - lastUltraReadAtMs < ULTRA_READ_INTERVAL_MS) {
+    return;
+  }
+  lastUltraReadAtMs = nowMs;
+
+  float distanceCm = readUltrasonicDistanceCm();
+  bool triggerActive = distanceCm > 0.0f && distanceCm <= ULTRA_TRIGGER_DISTANCE_CM;
+  bool releaseActive = distanceCm < 0.0f || distanceCm >= ULTRA_RELEASE_DISTANCE_CM;
+
+  if (releaseActive) {
+    ultraPresenceLatched = false;
+  }
+
+  if (!triggerActive || ultraPresenceLatched) {
+    return;
+  }
+  ultraPresenceLatched = true;
+
+  handleTrigger("ULTRA", RequestedCommand::ANY);
 }
 
 void softStopDrive(bool motorAForward, bool motorBForward, int currentSpeed) {
