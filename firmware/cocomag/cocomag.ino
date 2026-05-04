@@ -64,7 +64,6 @@ constexpr unsigned long ULTRA_PULSE_TIMEOUT_US = 25000UL;
 String bluetoothBuffer;
 bool isPresenting = false;
 bool resetRequested = false;
-bool resetInProgress = false;
 bool mpuReady = false;
 bool bluetoothReady = false;
 float gyroZBiasDps = 0.0f;
@@ -115,7 +114,7 @@ const char* stageToString(LocalStage stage);
 void handleTrigger(const char* source, RequestedCommand requestedCommand);
 void logIgnoredTrigger(const char* source);
 void handleResetCommand();
-void applyReset();
+bool applyReset();
 bool pollBluetoothCommands();
 bool delayWithReset(unsigned long durationMs);
 bool shouldAbortForReset();
@@ -180,11 +179,6 @@ void handleCommand(const String& command) {
 
   Serial.print("COCOMAG_CMD=");
   Serial.println(normalized);
-
-  if (resetInProgress) {
-    Serial.println("COMMAND_IGNORED_RESET_IN_PROGRESS");
-    return;
-  }
 
   if (normalized == "COCOMAG:PRESENT") {
     handleTrigger("BT", RequestedCommand::PRESENT);
@@ -256,28 +250,33 @@ void handleTrigger(const char* source, RequestedCommand requestedCommand) {
 
 void handleResetCommand() {
   Serial.println("RESET_RECEIVED");
-  applyReset();
-  emitLine("COCOMAG_RESET_DONE");
-  Serial.println("RESET_DONE_SENT");
-}
-
-void applyReset() {
-  resetInProgress = true;
-  stopMotors();
-  isPresenting = false;
-  ultraPresenceLatched = false;
-  lastUltraReadAtMs = 0;
-  bluetoothBuffer = "";
-  actionServo.write(SERVO_REST_ANGLE);
-  localStage = LocalStage::READY_FOR_PRESENT;
-
-  if (mpuReady) {
-    calibrateGyroBias();
+  bool resetCompleted = applyReset();
+  if (resetCompleted) {
+    emitLine("COCOMAG_RESET_DONE");
+    Serial.println("RESET_DONE_SENT");
+    return;
   }
 
-  resetRequested = true;
-  resetInProgress = false;
+  emitLine("COCOMAG_RESET_REQUESTED");
+  Serial.println("RESET_REQUESTED_SENT");
+}
+
+bool applyReset() {
+  stopMotors();
+  ultraPresenceLatched = false;
+
+  if (isPresenting) {
+    resetRequested = true;
+    Serial.println("RESET_ABORT_REQUESTED");
+    Serial.println("RESET_APPLIED");
+    return false;
+  }
+
+  resetRequested = false;
+  isPresenting = false;
+  localStage = LocalStage::READY_FOR_PRESENT;
   Serial.println("RESET_APPLIED");
+  return true;
 }
 
 bool pollBluetoothCommands() {
@@ -326,6 +325,9 @@ void executePresentationFrom(const char* origin) {
   if (resetRequested) {
     Serial.println("PRESENT_ABORTED_BY_RESET");
     resetRequested = false;
+    localStage = LocalStage::READY_FOR_PRESENT;
+    emitLine("COCOMAG_RESET_DONE");
+    Serial.println("RESET_DONE_SENT");
     return;
   }
 
@@ -351,6 +353,9 @@ void executeActionFrom(const char* origin) {
   if (resetRequested) {
     Serial.println("ACTION_ABORTED_BY_RESET");
     resetRequested = false;
+    localStage = LocalStage::READY_FOR_PRESENT;
+    emitLine("COCOMAG_RESET_DONE");
+    Serial.println("RESET_DONE_SENT");
     return;
   }
 
