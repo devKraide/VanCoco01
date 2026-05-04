@@ -19,6 +19,7 @@ from config import (
     COCOVISION_PORT,
     MOCK_ROBOTS,
     PRESENTATION_MODE,
+    ROBOT_COMMAND_RESET,
 )
 
 try:
@@ -77,6 +78,13 @@ class RobotComm:
         with self._lock:
             self._timers.append(timer)
         timer.start()
+
+    def reset_cocomag(self) -> None:
+        print("SENDING_COCOMAG_RESET")
+        if self._send_robot_command("COCOMAG", ROBOT_COMMAND_RESET):
+            return
+
+        print("[RobotComm] COCOMAG_RESET_NO_ACK: reset nao enviado; seguindo sem bloquear.")
 
     def poll_events(self) -> list[RobotEvent]:
         events: list[RobotEvent] = []
@@ -190,7 +198,9 @@ class RobotComm:
             connection = self._connections[robot]
 
         if connection is None:
-            if self._mock_robots_enabled():
+            if command == ROBOT_COMMAND_RESET:
+                print(f"[RobotComm] {robot} indisponivel. Reset sem mock.")
+            elif self._mock_robots_enabled():
                 print(f"[RobotComm] {robot} indisponivel. Usando mock explicito.")
             else:
                 print(f"[RobotComm] {robot} indisponivel. Mock automatico desativado.")
@@ -235,6 +245,8 @@ class RobotComm:
 
             if message == "COCOMAG_DONE":
                 self._emit_event(RobotEvent(robot="COCOMAG", status="DONE"))
+            elif message == "COCOMAG_RESET_DONE":
+                print("COCOMAG_RESET_ACK_RECEIVED")
             elif message == "COCOVISION_DONE":
                 self._emit_event(RobotEvent(robot="COCOVISION", status="DONE"))
             elif message in {"COLOR_RED", "COLOR_GREEN", "COLOR_BLUE"}:

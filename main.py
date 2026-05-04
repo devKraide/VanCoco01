@@ -24,6 +24,7 @@ class VanCocoApp:
         self._gesture_mapper = GestureMapper()
         self._story_engine = StoryEngine()
         self._robot_comm = RobotComm()
+        self._cocomag_reset_sent_for_presentation = False
 
     def run(self) -> None:
         try:
@@ -169,6 +170,7 @@ class VanCocoApp:
             return
 
         if transition.robot_commands:
+            self._send_cocomag_reset_before_presentation(transition.robot_commands)
             for robot_name, command in transition.robot_commands:
                 self._robot_comm.send_command(robot_name, command)
             self._state_manager.enter_waiting_presentation()
@@ -345,6 +347,19 @@ class VanCocoApp:
         trigger_count = self._robot_comm.poll_central_fallback_triggers()
         for _ in range(trigger_count):
             self._consume_central_fallback_trigger()
+
+    def _send_cocomag_reset_before_presentation(
+        self,
+        robot_commands: tuple[tuple[str, str], ...],
+    ) -> None:
+        if self._cocomag_reset_sent_for_presentation:
+            return
+
+        if ("COCOMAG", "PRESENT") not in robot_commands:
+            return
+
+        self._robot_comm.reset_cocomag()
+        self._cocomag_reset_sent_for_presentation = True
 
     def _consume_central_fallback_trigger(self) -> None:
         state = self._state_manager.state
