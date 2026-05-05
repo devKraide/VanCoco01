@@ -42,11 +42,16 @@ constexpr unsigned long ACTION_FORWARD_MS = 1500;
 constexpr unsigned long RETURN_BACKWARD_MS = 1500;
 constexpr float GYRO_Z_LSB_PER_DPS = 131.0f;
 constexpr float PRESENT_TARGET_DEGREES = 360.0f;
-constexpr float GYRO_ANGLE_SCALE = 1.25f;
+constexpr float GYRO_ANGLE_SCALE = 0.75f;
+constexpr float ROTATION_COMPLETION_TOLERANCE_DEGREES = 3.0f;
 constexpr unsigned long ROTATION_TIMEOUT_MS = 6000;
+constexpr unsigned long PRESENT_ROTATION_TIMEOUT_MS = 12000;
+constexpr unsigned long GYRO_STATIONARY_DIAGNOSTIC_MS = 1000;
 constexpr unsigned long GYRO_CALIBRATION_SAMPLES = 120;
 constexpr unsigned long GYRO_SAMPLE_DELAY_MS = 5;
 constexpr float GYRO_NOISE_FLOOR_DPS = 2.0f;
+constexpr unsigned long GYRO_DEBUG_LOG_INTERVAL_MS = 250;
+constexpr unsigned long GYRO_STATIONARY_LOG_INTERVAL_MS = 250;
 constexpr float ULTRASONIC_TRIGGER_DISTANCE_CM = 6.0f;
 constexpr float ULTRASONIC_RELEASE_DISTANCE_CM = 10.0f;
 constexpr unsigned long ULTRASONIC_PULSE_TIMEOUT_US = 25000UL;
@@ -111,12 +116,15 @@ bool runReturn();
 bool initializeMpu();
 bool calibrateGyroBias();
 bool rotateDegrees(float targetDegrees);
+bool rotateDegrees(float targetDegrees, unsigned long timeoutMs, bool logStationaryDiagnostic);
+void logStationaryGyro(unsigned long durationMs);
 void applyDrive(bool motorAForward, int motorASpeed, bool motorBForward, int motorBSpeed);
 void rampDrive(bool motorAForward, bool motorBForward, int targetSpeed);
 void softStopDrive(bool motorAForward, bool motorBForward, int currentSpeed);
 void moveForward();
 void moveBackward();
 void turnRight();
+void turnRightAtSpeed(int speedValue);
 void stopMotors();
 void setMotorA(bool forward, int speedValue);
 void setMotorB(bool forward, int speedValue);
@@ -495,27 +503,36 @@ void executeReturnFrom(const char* origin) {
 
 bool runPresentation() {
   Serial.println("PRESENT_START");
+  Serial.println("PRESENT_FORWARD_START");
   moveForward();
   if (!delayWithReset(PRESENT_FORWARD_MS)) {
     return false;
   }
+  Serial.println("PRESENT_FORWARD_END");
 
   softStopDrive(true, true, MOVE_SPEED);
   if (!delayWithReset(STOP_MS)) {
     return false;
   }
 
-  if (!rotateDegrees(PRESENT_TARGET_DEGREES) && resetRequested) {
-    return false;
+  Serial.println("PRESENT_ROTATION_START");
+  if (!rotateDegrees(PRESENT_TARGET_DEGREES, PRESENT_ROTATION_TIMEOUT_MS, true)) {
+    if (resetRequested) {
+      return false;
+    }
+    Serial.println("PRESENT_ROTATION_FAILED_CONTINUING");
   }
+  Serial.println("PRESENT_ROTATION_END");
   if (!delayWithReset(STOP_MS)) {
     return false;
   }
 
+  Serial.println("PRESENT_BACKWARD_START");
   moveBackward();
   if (!delayWithReset(PRESENT_BACKWARD_MS)) {
     return false;
   }
+  Serial.println("PRESENT_BACKWARD_END");
 
   softStopDrive(false, false, MOVE_SPEED);
   if (!delayWithReset(STOP_MS)) {
@@ -622,6 +639,10 @@ bool calibrateGyroBias() {
 }
 
 bool rotateDegrees(float targetDegrees) {
+  return rotateDegrees(targetDegrees, ROTATION_TIMEOUT_MS, false);
+}
+
+bool rotateDegrees(float targetDegrees, unsigned long timeoutMs, bool logStationaryDiagnostic) {
   if (!mpuReady) {
     emitLine("COCOVISION_MPU_UNAVAILABLE");
     return false;
@@ -631,24 +652,49 @@ bool rotateDegrees(float targetDegrees) {
   if (!delayWithReset(STOP_MS)) {
     return false;
   }
+  if (logStationaryDiagnostic) {
+    logStationaryGyro(GYRO_STATIONARY_DIAGNOSTIC_MS);
+    if (resetRequested) {
+      return false;
+    }
+  }
+
   if (!calibrateGyroBias()) {
     emitLine("COCOVISION_MPU_RECALIBRATION_FAILED");
     return false;
   }
+  Serial.print("GYRO_Z_BIAS_DPS=");
+  Serial.println(gyroZBiasDps, 4);
 
   unsigned long startedAt = millis();
   unsigned long lastSampleAt = micros();
+  unsigned long lastDebugLogAt = millis();
   float accumulatedDegrees = 0.0f;
+  float completionTargetDegrees = targetDegrees - ROTATION_COMPLETION_TOLERANCE_DEGREES;
+  if (completionTargetDegrees < 0.0f) {
+    completionTargetDegrees = 0.0f;
+  }
 
-  turnRight();
-  while (accumulatedDegrees < targetDegrees) {
+  Serial.print("ROTATION_START target=");
+  Serial.println(targetDegrees, 1);
+  Serial.print("ROTATION_TIMEOUT_MS=");
+  Serial.println(timeoutMs);
+  Serial.print("ROTATION_COMPLETION_TARGET=");
+  Serial.println(completionTargetDegrees, 1);
+  Serial.println("ROTATION_ANGLE_RESET=0.0");
+  Serial.print("MOTOR_SPIN_START left=FORWARD right=BACKWARD speed=");
+  Serial.println(TURN_SPEED);
+  turnRightAtSpeed(TURN_SPEED);
+  while (accumulatedDegrees < completionTargetDegrees) {
     if (shouldAbortForReset()) {
+      Serial.println("ROTATION_ABORTED_BY_RESET");
       return false;
     }
 
     unsigned long nowMicros = micros();
     float deltaSeconds = (nowMicros - lastSampleAt) / 1000000.0f;
     lastSampleAt = nowMicros;
+    unsigned long elapsedMs = millis() - startedAt;
 
     float gyroZDps = (mpu.getRotationZ() / GYRO_Z_LSB_PER_DPS) - gyroZBiasDps;
     if (fabsf(gyroZDps) >= GYRO_NOISE_FLOOR_DPS) {
@@ -656,17 +702,83 @@ bool rotateDegrees(float targetDegrees) {
       accumulatedDegrees += deltaDegrees;
     }
 
-    if (millis() - startedAt > ROTATION_TIMEOUT_MS) {
-      softStopDrive(true, false, TURN_SPEED);
+    if (millis() - lastDebugLogAt >= GYRO_DEBUG_LOG_INTERVAL_MS) {
+      lastDebugLogAt = millis();
+      Serial.print("ROTATION_PROGRESS angle=");
+      Serial.print(accumulatedDegrees, 1);
+      Serial.print(" gyroZ=");
+      Serial.print(gyroZDps, 2);
+      Serial.print(" dt=");
+      Serial.print(deltaSeconds, 4);
+      Serial.print(" elapsed=");
+      Serial.println(elapsedMs);
+    }
+
+    if (elapsedMs > timeoutMs) {
+      stopMotors();
+      Serial.println("MOTOR_STOP");
+      Serial.print("ROTATION_TIMEOUT angle=");
+      Serial.print(accumulatedDegrees, 1);
+      Serial.print(" target=");
+      Serial.print(targetDegrees, 1);
+      Serial.print(" elapsed=");
+      Serial.println(elapsedMs);
+      if (accumulatedDegrees >= completionTargetDegrees) {
+        Serial.println("ROTATION_REACHED_BY_TOLERANCE");
+        Serial.println("ROTATION_STOP_REASON=TARGET_REACHED");
+        Serial.println("ROTATION_STOP");
+        return true;
+      }
       emitLine("COCOVISION_MPU_ROTATION_TIMEOUT");
+      Serial.println("ROTATION_STOP_REASON=TIMEOUT");
+      Serial.println("ROTATION_STOP");
       return false;
     }
 
     delay(2);
   }
 
-  softStopDrive(true, false, TURN_SPEED);
+  Serial.print("ROTATION_REACHED angle=");
+  Serial.println(accumulatedDegrees, 1);
+  stopMotors();
+  Serial.println("MOTOR_STOP");
+  Serial.println("ROTATION_STOP_REASON=TARGET_REACHED");
+  Serial.println("ROTATION_STOP");
+  Serial.print("COCOVISION_MPU_ROTATION_DEGREES=");
+  Serial.println(accumulatedDegrees, 1);
+#if COCOVISION_BT_AVAILABLE
+  if (SerialBT.hasClient()) {
+    SerialBT.print("COCOVISION_MPU_ROTATION_DEGREES=");
+    SerialBT.println(accumulatedDegrees, 1);
+  }
+#endif
   return true;
+}
+
+void logStationaryGyro(unsigned long durationMs) {
+  Serial.print("GYRO_STATIONARY_DIAGNOSTIC_START duration=");
+  Serial.println(durationMs);
+  unsigned long startedAt = millis();
+  unsigned long lastLogAt = 0;
+  while (millis() - startedAt < durationMs) {
+    if (shouldAbortForReset()) {
+      return;
+    }
+
+    unsigned long nowMs = millis();
+    if (lastLogAt == 0 || nowMs - lastLogAt >= GYRO_STATIONARY_LOG_INTERVAL_MS) {
+      lastLogAt = nowMs;
+      float rawGyroZDps = mpu.getRotationZ() / GYRO_Z_LSB_PER_DPS;
+      Serial.print("GYRO_STATIONARY gyroZ=");
+      Serial.print(rawGyroZDps, 4);
+      Serial.print(" elapsed=");
+      Serial.println(nowMs - startedAt);
+    }
+    if (!delayWithReset(5)) {
+      return;
+    }
+  }
+  Serial.println("GYRO_STATIONARY_DIAGNOSTIC_END");
 }
 
 float readUltrasonicDistanceCm() {
@@ -721,6 +833,10 @@ void moveBackward() {
 
 void turnRight() {
   rampDrive(true, false, TURN_SPEED);
+}
+
+void turnRightAtSpeed(int speedValue) {
+  applyDrive(true, speedValue, false, speedValue);
 }
 
 void stopMotors() {
