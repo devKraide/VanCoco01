@@ -29,7 +29,6 @@ class VanCocoApp:
         self._story_engine = StoryEngine()
         self._robot_comm = RobotComm()
         self._presentation_robot_resets_sent = False
-        self._last_vision_diagnostic_message = ""
         self._last_vision_diagnostic_at = 0.0
 
     def run(self) -> None:
@@ -562,6 +561,9 @@ class VanCocoApp:
             self._media_controller.start_mock_video(transition.mock_video_duration)
 
     def _read_trigger_source(self, key_code: int, vision_inputs):
+        if not VISION_DIAGNOSTIC_LOG:
+            return self._gesture_mapper.map_gesture(vision_inputs.gesture)
+
         gesture_result = self._gesture_mapper.map_gesture(vision_inputs.gesture)
         self._log_gesture_diagnostic(vision_inputs.gesture, gesture_result)
         return gesture_result
@@ -577,7 +579,8 @@ class VanCocoApp:
         ):
             trigger_name = CameraTriggerName.DOUBLE_CLOSED_FIST_DETECTED
 
-        self._log_video8_diagnostic(vision_inputs, trigger_name)
+        if VISION_DIAGNOSTIC_LOG:
+            self._log_video8_diagnostic(vision_inputs, trigger_name)
         return trigger_name
 
     def _log_gesture_diagnostic(
@@ -646,13 +649,9 @@ class VanCocoApp:
     def _emit_vision_diagnostic(self, message: str) -> None:
         now = time.monotonic()
         interval_seconds = VISION_DIAGNOSTIC_LOG_INTERVAL_MS / 1000.0
-        if (
-            message == self._last_vision_diagnostic_message
-            and now - self._last_vision_diagnostic_at < interval_seconds
-        ):
+        if now - self._last_vision_diagnostic_at < interval_seconds:
             return
 
-        self._last_vision_diagnostic_message = message
         self._last_vision_diagnostic_at = now
         print(message)
 
@@ -680,8 +679,7 @@ class VanCocoApp:
         return "YES" if value else "NO"
 
     def _format_fps(self) -> str:
-        fps = self._vision_system.last_fps
-        return f"{fps:.1f}" if fps is not None else "UNKNOWN"
+        return "UNKNOWN"
 
     def _build_vision_request(self) -> dict[str, object]:
         state = self._state_manager.state
