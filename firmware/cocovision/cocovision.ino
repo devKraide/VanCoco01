@@ -42,7 +42,7 @@ constexpr unsigned long ACTION_FORWARD_MS = 1500;
 constexpr unsigned long RETURN_BACKWARD_MS = 1500;
 constexpr float GYRO_Z_LSB_PER_DPS = 131.0f;
 constexpr float PRESENT_TARGET_DEGREES = 360.0f;
-constexpr float GYRO_ANGLE_SCALE = 0.75f;
+constexpr float GYRO_ANGLE_SCALE = 1.125f;
 constexpr float ROTATION_COMPLETION_TOLERANCE_DEGREES = 3.0f;
 constexpr unsigned long ROTATION_TIMEOUT_MS = 6000;
 constexpr unsigned long PRESENT_ROTATION_TIMEOUT_MS = 12000;
@@ -665,6 +665,10 @@ bool rotateDegrees(float targetDegrees, unsigned long timeoutMs, bool logStation
   }
   Serial.print("GYRO_Z_BIAS_DPS=");
   Serial.println(gyroZBiasDps, 4);
+  Serial.print("GYRO_UNIT_INFO range=FS_250 raw_lsb_per_dps=");
+  Serial.print(GYRO_Z_LSB_PER_DPS, 1);
+  Serial.print(" unit=deg_per_sec angle_scale=");
+  Serial.println(GYRO_ANGLE_SCALE, 3);
 
   unsigned long startedAt = millis();
   unsigned long lastSampleAt = micros();
