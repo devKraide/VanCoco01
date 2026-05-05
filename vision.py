@@ -317,6 +317,7 @@ class VisionSystem:
         self._perf_frame_counter = 0
         self._ready_frames = 0
         self._is_ready = False
+        self._last_fps: Optional[float] = None
         self._warm_up_camera()
 
     def _open_camera(self):
@@ -417,7 +418,13 @@ class VisionSystem:
             pose_elapsed,
             marker_elapsed,
         )
+        elapsed = time.monotonic() - started_at
+        self._last_fps = 1.0 / elapsed if elapsed > 0.0 else None
         return VisionInputs(gesture=gesture, marker_detected=marker_detected)
+
+    @property
+    def last_fps(self) -> Optional[float]:
+        return self._last_fps
 
     def detect_gesture(
         self,

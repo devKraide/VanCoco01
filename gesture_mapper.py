@@ -46,6 +46,45 @@ class GestureMapper:
         self._debug_emit(gesture, action is not None)
         return GestureResult(gesture=gesture, action=action)
 
+    @property
+    def stable_frames(self) -> int:
+        return self._stable_frames
+
+    @property
+    def stable_gesture(self) -> Optional[GestureName]:
+        if self._stable_frames < GESTURE_STABLE_FRAMES:
+            return None
+        return self._last_seen_gesture
+
+    def diagnostic_rejection_reason(
+        self,
+        raw_gesture: Optional[GestureName],
+        result: Optional[GestureResult],
+        expected_gesture: Optional[GestureName],
+    ) -> Optional[str]:
+        if result is not None:
+            return None
+
+        if expected_gesture is None:
+            return "no_expected_gesture"
+
+        if raw_gesture is None:
+            return "no_raw_gesture_or_unexpected"
+
+        if raw_gesture is not expected_gesture:
+            return "raw_gesture_mismatch"
+
+        if self._stable_frames < GESTURE_STABLE_FRAMES:
+            return "stabilizing"
+
+        if self._latched_gesture is raw_gesture:
+            return "already_latched"
+
+        if raw_gesture not in self._action_map:
+            return "no_action_for_gesture"
+
+        return "not_accepted"
+
     def _debug_emit(self, gesture: GestureName, has_action: bool) -> None:
         message = f"[GestureMapper] accepted={gesture.value} action={'YES' if has_action else 'NO'}"
         if message == self._last_debug_message:
