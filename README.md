@@ -98,8 +98,8 @@ Use este roteiro sempre que ligar o PC/robos e for rodar a apresentacao.
 bluetoothctl devices Paired
 sudo rfcomm release /dev/rfcomm0
 sudo rfcomm release /dev/rfcomm1
-sudo rfcomm bind /dev/rfcomm0 <MAC_COCOMAG> 1
-sudo rfcomm bind /dev/rfcomm1 <MAC_COCOVISION> 1
+sudo rfcomm bind /dev/rfcomm0 08:A6:F7:BC:35:6E 1
+sudo rfcomm bind /dev/rfcomm1 3C:E9:0E:8C:02:EE 1
 ls -l /dev/rfcomm0 /dev/rfcomm1
 ```
 
