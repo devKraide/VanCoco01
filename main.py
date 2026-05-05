@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import time
-
 from config import (
     AppState,
     CameraTriggerName,
     ENABLE_DOUBLE_CLOSED_FIST_FOR_VIDEO8,
     EXIT_KEYS,
     GestureName,
+    TEST_GESTURES_MODE,
     VIDEO_ACTIONS,
-    VISION_DIAGNOSTIC_LOG,
-    VISION_DIAGNOSTIC_LOG_INTERVAL_MS,
 )
 from gesture_mapper import GestureMapper, GestureResult
 from media_controller import MediaController
@@ -29,7 +26,7 @@ class VanCocoApp:
         self._story_engine = StoryEngine()
         self._robot_comm = RobotComm()
         self._presentation_robot_resets_sent = False
-        self._last_vision_diagnostic_at = 0.0
+        self._last_test_gesture_snapshot = None
 
     def run(self) -> None:
         try:
@@ -561,11 +558,11 @@ class VanCocoApp:
             self._media_controller.start_mock_video(transition.mock_video_duration)
 
     def _read_trigger_source(self, key_code: int, vision_inputs):
-        if not VISION_DIAGNOSTIC_LOG:
+        if not TEST_GESTURES_MODE:
             return self._gesture_mapper.map_gesture(vision_inputs.gesture)
 
         gesture_result = self._gesture_mapper.map_gesture(vision_inputs.gesture)
-        self._log_gesture_diagnostic(vision_inputs.gesture, gesture_result)
+        self._log_test_gesture_result(vision_inputs.gesture, gesture_result)
         return gesture_result
 
     def _read_video8_trigger_source(self, vision_inputs):
@@ -579,51 +576,45 @@ class VanCocoApp:
         ):
             trigger_name = CameraTriggerName.DOUBLE_CLOSED_FIST_DETECTED
 
-        if VISION_DIAGNOSTIC_LOG:
-            self._log_video8_diagnostic(vision_inputs, trigger_name)
+        if TEST_GESTURES_MODE:
+            self._log_test_video8_result(vision_inputs, trigger_name)
         return trigger_name
 
-    def _log_gesture_diagnostic(
+    def _log_test_gesture_result(
         self,
         raw_gesture: GestureName | None,
         gesture_result: GestureResult | None,
     ) -> None:
-        if not VISION_DIAGNOSTIC_LOG:
-            return
-
         state = self._state_manager.state
         expected_gesture = self._story_engine.current_expected_gesture()
         stable_gesture = self._gesture_mapper.stable_gesture
-        rejection_reason = self._gesture_mapper.diagnostic_rejection_reason(
-            raw_gesture=raw_gesture,
-            result=gesture_result,
-            expected_gesture=expected_gesture,
+        result_text = "ACCEPTED" if gesture_result is not None else "REJECTED"
+        snapshot = (
+            state,
+            expected_gesture,
+            raw_gesture,
+            stable_gesture,
+            result_text,
         )
-        accepted_text = gesture_result.gesture.value if gesture_result is not None else "NONE"
-        rejected_text = (
-            f"reason={rejection_reason}" if rejection_reason is not None else "NONE"
-        )
-        message = (
-            f"VISION_STATE={state.value} "
-            f"EXPECTED_GESTURE={self._format_gesture(expected_gesture)} "
-            f"RAW_GESTURE={self._format_gesture(raw_gesture)} "
-            f"STABLE_GESTURE={self._format_gesture(stable_gesture)} "
-            f"STABLE_FRAMES={self._gesture_mapper.stable_frames} "
-            f"GESTURE_ACCEPTED={accepted_text} "
-            f"GESTURE_REJECTED {rejected_text} "
-            f"VISION_FPS={self._format_fps()} "
-            f"FALLBACK_AVAILABLE={self._format_bool(self._central_fallback_available_for_state(state))}"
-        )
-        self._emit_vision_diagnostic(message)
+        if snapshot == self._last_test_gesture_snapshot:
+            return
 
-    def _log_video8_diagnostic(
+        self._last_test_gesture_snapshot = snapshot
+        message = (
+            "TEST_GESTURES "
+            f"state={state.value} "
+            f"expected={self._format_gesture(expected_gesture)} "
+            f"raw={self._format_gesture(raw_gesture)} "
+            f"stable={self._format_gesture(stable_gesture)} "
+            f"result={result_text}"
+        )
+        print(message)
+
+    def _log_test_video8_result(
         self,
         vision_inputs: VisionInputs,
         trigger_name: CameraTriggerName | None,
     ) -> None:
-        if not VISION_DIAGNOSTIC_LOG:
-            return
-
         state = self._state_manager.state
         raw_trigger = "NONE"
         if vision_inputs.marker_detected:
@@ -631,55 +622,32 @@ class VanCocoApp:
         elif vision_inputs.gesture is GestureName.DOUBLE_CLOSED_FIST:
             raw_trigger = GestureName.DOUBLE_CLOSED_FIST.value
 
-        accepted_text = trigger_name.value if trigger_name is not None else "NONE"
-        rejected_reason = "NONE" if trigger_name is not None else "reason=no_marker_or_double_closed_fist"
-        message = (
-            f"VISION_STATE={state.value} "
-            "EXPECTED_GESTURE=MAGNIFIER_MARKER_DETECTED_OR_DOUBLE_CLOSED_FIST "
-            f"RAW_GESTURE={raw_trigger} "
-            f"STABLE_GESTURE={accepted_text} "
-            "STABLE_FRAMES=0 "
-            f"GESTURE_ACCEPTED={accepted_text} "
-            f"GESTURE_REJECTED {rejected_reason} "
-            f"VISION_FPS={self._format_fps()} "
-            f"FALLBACK_AVAILABLE={self._format_bool(self._central_fallback_available_for_state(state))}"
+        stable_trigger = trigger_name.value if trigger_name is not None else "NONE"
+        result_text = "ACCEPTED" if trigger_name is not None else "REJECTED"
+        snapshot = (
+            state,
+            "MAGNIFIER_MARKER_DETECTED_OR_DOUBLE_CLOSED_FIST",
+            raw_trigger,
+            stable_trigger,
+            result_text,
         )
-        self._emit_vision_diagnostic(message)
-
-    def _emit_vision_diagnostic(self, message: str) -> None:
-        now = time.monotonic()
-        interval_seconds = VISION_DIAGNOSTIC_LOG_INTERVAL_MS / 1000.0
-        if now - self._last_vision_diagnostic_at < interval_seconds:
+        if snapshot == self._last_test_gesture_snapshot:
             return
 
-        self._last_vision_diagnostic_at = now
+        self._last_test_gesture_snapshot = snapshot
+        message = (
+            "TEST_GESTURES "
+            f"state={state.value} "
+            "expected=MAGNIFIER_MARKER_DETECTED_OR_DOUBLE_CLOSED_FIST "
+            f"raw={raw_trigger} "
+            f"stable={stable_trigger} "
+            f"result={result_text}"
+        )
         print(message)
-
-    def _central_fallback_available_for_state(self, state: AppState) -> bool:
-        return state in {
-            AppState.IDLE_BLACK_SCREEN,
-            AppState.WAITING_COCOMAG_ACTION,
-            AppState.WAITING_VIDEO5_TRIGGER,
-            AppState.WAITING_VIDEO6_TRIGGER,
-            AppState.WAITING_VIDEO8_TRIGGER,
-            AppState.WAITING_VIDEO9_TRIGGER,
-            AppState.WAITING_PRESENTATION,
-            AppState.WAITING_COCOMAG_ACTION_COMPLETION,
-            AppState.WAITING_COCOVISION_ACTION_COMPLETION,
-            AppState.WAITING_COLOR,
-            AppState.WAITING_COCOVISION_RETURN_COMPLETION,
-        }
 
     @staticmethod
     def _format_gesture(gesture: GestureName | None) -> str:
         return gesture.value if gesture is not None else "NONE"
-
-    @staticmethod
-    def _format_bool(value: bool) -> str:
-        return "YES" if value else "NO"
-
-    def _format_fps(self) -> str:
-        return "UNKNOWN"
 
     def _build_vision_request(self) -> dict[str, object]:
         state = self._state_manager.state
