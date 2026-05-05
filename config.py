@@ -20,8 +20,7 @@ class AppState(Enum):
     WAITING_VIDEO5_TRIGGER = "waiting_video5_trigger"
     WAITING_COCOVISION_ACTION_COMPLETION = "waiting_cocovision_action_completion"
     WAITING_COLOR = "waiting_color"
-    WAITING_VIDEO7_TRIGGER = "waiting_video7_trigger"
-    WAITING_COCOVISION_RETURN_COMPLETION = "waiting_cocovision_return_completion"
+    WAITING_VIDEO6_TRIGGER = "waiting_video6_trigger"
     WAITING_VIDEO8_TRIGGER = "waiting_video8_trigger"
     WAITING_VIDEO9_TRIGGER = "waiting_video9_trigger"
 
@@ -62,19 +61,18 @@ VIDEO_ACTIONS = {
     ),
     GestureName.CLOSED_FIST: VideoAction(
         gesture=GestureName.CLOSED_FIST,
-        video_path=MEDIA_DIR / "video7.mp4",
+        video_path=MEDIA_DIR / "video6.mp4",
     ),
 }
 
 VIDEO3_PATH = MEDIA_DIR / "video3.mp4"
 VIDEO4_PATH = MEDIA_DIR / "video4.mp4"
-VIDEO5_PATH = MEDIA_DIR / "video5.mp4"
 VIDEO7_PATH = MEDIA_DIR / "video7.mp4"
 VIDEO8_PATH = MEDIA_DIR / "video8.mp4"
 VIDEO9_SUCCESS_PATH = MEDIA_DIR / "video9a.mp4"
 VIDEO9_FAILURE_PATH = MEDIA_DIR / "video9b.mp4"
 COLOR_VIDEO_PATHS = {
-    "COLOR_BLUE": MEDIA_DIR / "video6.mp4",
+    "COLOR_BLUE": VIDEO7_PATH,
 }
 
 #if you want to change the final outcome -> FINAL_OUTCOME = "failure"
@@ -112,8 +110,6 @@ VISION_GESTURE_DEBUG = False
 ROBOT_NAMES = ("COCOMAG", "COCOVISION")
 ROBOT_COMMAND_PRESENT = "PRESENT"
 ROBOT_COMMAND_ACTION = "ACTION"
-ROBOT_COMMAND_RETURN = "RETURN"
-ROBOT_COMMAND_SCAN = "SCAN"
 ROBOT_COMMAND_RESET = "RESET"
 MOCK_VIDEO_DURATION_SECONDS = 2.0
 PRESENTATION_MODE = True

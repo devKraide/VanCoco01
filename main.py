@@ -84,8 +84,8 @@ class VanCocoApp:
                     self._handle_waiting_color_state()
                     continue
 
-                if self._state_manager.state is AppState.WAITING_VIDEO7_TRIGGER:
-                    self._handle_waiting_video7_trigger_state(key_code, vision_inputs)
+                if self._state_manager.state is AppState.WAITING_VIDEO6_TRIGGER:
+                    self._handle_waiting_video6_trigger_state(key_code, vision_inputs)
                     continue
 
                 if self._state_manager.state is AppState.WAITING_VIDEO8_TRIGGER:
@@ -94,10 +94,6 @@ class VanCocoApp:
 
                 if self._state_manager.state is AppState.WAITING_VIDEO9_TRIGGER:
                     self._handle_waiting_video9_trigger_state(key_code, vision_inputs)
-                    continue
-
-                if self._state_manager.state is AppState.WAITING_COCOVISION_RETURN_COMPLETION:
-                    self._handle_waiting_cocovision_return_completion_state()
                     continue
 
                 self._handle_waiting_cocomag_action_completion_state()
@@ -115,8 +111,7 @@ class VanCocoApp:
             AppState.WAITING_VIDEO5_TRIGGER,
             AppState.WAITING_COCOVISION_ACTION_COMPLETION,
             AppState.WAITING_COLOR,
-            AppState.WAITING_VIDEO7_TRIGGER,
-            AppState.WAITING_COCOVISION_RETURN_COMPLETION,
+            AppState.WAITING_VIDEO6_TRIGGER,
             AppState.WAITING_VIDEO8_TRIGGER,
             AppState.WAITING_VIDEO9_TRIGGER,
         }:
@@ -157,14 +152,16 @@ class VanCocoApp:
         if self._story_engine.consume_color_video_finished():
             self._robot_comm.clear_color_events()
             self._robot_comm.set_color_events_enabled(True)
-            if self._story_engine.is_waiting_video7_trigger():
-                self._state_manager.enter_waiting_video7_trigger()
+            if self._story_engine.is_waiting_video8_trigger():
+                self._state_manager.enter_waiting_video8_trigger()
                 return
             self._state_manager.enter_waiting_color()
             return
 
         transition = self._story_engine.complete_active_step()
         if self._story_engine.is_waiting_cocovision_action_completion():
+            self._robot_comm.set_color_events_enabled(False)
+            self._robot_comm.clear_color_events()
             for robot_name, command in transition.robot_commands:
                 self._robot_comm.send_command(robot_name, command)
             self._state_manager.enter_waiting_cocovision_action_completion()
@@ -188,8 +185,8 @@ class VanCocoApp:
             self._state_manager.enter_waiting_color()
             return
 
-        if self._story_engine.is_waiting_video7_trigger():
-            self._state_manager.enter_waiting_video7_trigger()
+        if self._story_engine.is_waiting_video6_trigger():
+            self._state_manager.enter_waiting_video6_trigger()
             return
 
         if self._story_engine.is_waiting_video8_trigger():
@@ -286,31 +283,22 @@ class VanCocoApp:
             self._media_controller.start_mock_video(transition.mock_video_duration)
             return
 
-    def _handle_waiting_video7_trigger_state(self, key_code: int, vision_inputs) -> None:
+    def _handle_waiting_video6_trigger_state(self, key_code: int, vision_inputs) -> None:
         gesture_result = self._story_engine.consume_trigger(
             self._read_trigger_source(key_code, vision_inputs)
         )
         if gesture_result is None or gesture_result.gesture is not GestureName.CLOSED_FIST:
             return
 
-        transition = self._story_engine.complete_active_step()
-        for robot_name, command in transition.robot_commands:
-            self._robot_comm.send_command(robot_name, command)
-        self._state_manager.enter_waiting_cocovision_return_completion()
-
-    def _handle_waiting_cocovision_return_completion_state(self) -> None:
-        for event in self._robot_comm.poll_events():
-            transition = self._story_engine.consume_cocovision_return_result(event)
-            if transition.video_path is None:
-                continue
-
-            self._state_manager.start_system_playback(transition.video_path)
-            if transition.video_path.exists():
-                self._media_controller.start_video(transition.video_path)
-                return
-
-            self._media_controller.start_mock_video(transition.mock_video_duration)
+        if gesture_result.action is None:
             return
+
+        self._state_manager.start_system_playback(gesture_result.action.video_path)
+        if gesture_result.action.video_path.exists():
+            self._media_controller.start_video(gesture_result.action.video_path)
+            return
+
+        self._media_controller.start_mock_video(2.0)
 
     def _handle_waiting_video8_trigger_state(self, vision_inputs) -> None:
         trigger_name = self._read_video8_trigger_source(vision_inputs)
@@ -364,7 +352,7 @@ class VanCocoApp:
             AppState.IDLE_BLACK_SCREEN,
             AppState.WAITING_COCOMAG_ACTION,
             AppState.WAITING_VIDEO5_TRIGGER,
-            AppState.WAITING_VIDEO7_TRIGGER,
+            AppState.WAITING_VIDEO6_TRIGGER,
             AppState.WAITING_VIDEO9_TRIGGER,
         }:
             if self._apply_fallback_gesture(expected_gesture):
@@ -395,13 +383,6 @@ class VanCocoApp:
         if state is AppState.WAITING_COLOR:
             self._apply_fallback_robot_event(RobotEvent(robot="COCOVISION", status="COLOR_BLUE"))
             print("CENTRAL_FALLBACK_ACCEPTED: COLOR_BLUE in waiting_color")
-            return
-
-        if state is AppState.WAITING_COCOVISION_RETURN_COMPLETION:
-            self._apply_fallback_robot_event(RobotEvent(robot="COCOVISION", status="DONE"))
-            print(
-                "CENTRAL_FALLBACK_ACCEPTED: COCOVISION_DONE in waiting_cocovision_return_completion"
-            )
             return
 
         if state is AppState.WAITING_VIDEO8_TRIGGER:
@@ -450,11 +431,15 @@ class VanCocoApp:
                 self._media_controller.start_mock_video(2.0)
             return True
 
-        if state is AppState.WAITING_VIDEO7_TRIGGER:
-            transition = self._story_engine.complete_active_step()
-            for robot_name, command in transition.robot_commands:
-                self._robot_comm.send_command(robot_name, command)
-            self._state_manager.enter_waiting_cocovision_return_completion()
+        if state is AppState.WAITING_VIDEO6_TRIGGER:
+            if accepted_result.action is None:
+                return False
+
+            self._state_manager.start_system_playback(accepted_result.action.video_path)
+            if accepted_result.action.video_path.exists():
+                self._media_controller.start_video(accepted_result.action.video_path)
+            else:
+                self._media_controller.start_mock_video(2.0)
             return True
 
         if state is AppState.WAITING_VIDEO9_TRIGGER:
@@ -521,17 +506,6 @@ class VanCocoApp:
                 self._media_controller.start_mock_video(transition.mock_video_duration)
             return
 
-        if state is AppState.WAITING_COCOVISION_RETURN_COMPLETION:
-            transition = self._story_engine.consume_cocovision_return_result(event)
-            if transition.video_path is None:
-                return
-
-            self._state_manager.start_system_playback(transition.video_path)
-            if transition.video_path.exists():
-                self._media_controller.start_video(transition.video_path)
-            else:
-                self._media_controller.start_mock_video(transition.mock_video_duration)
-
     def _apply_fallback_video8_trigger(self, trigger_name: CameraTriggerName) -> None:
         transition = self._story_engine.consume_video8_trigger(trigger_name)
         if transition.video_path is None:
@@ -575,7 +549,7 @@ class VanCocoApp:
         if state is AppState.WAITING_VIDEO5_TRIGGER:
             return {"enabled": True, "expected_gesture": GestureName.THUMB_UP, "detect_marker": False, "prioritize_prayer_hands": False, "allow_double_closed_fist": False}
 
-        if state is AppState.WAITING_VIDEO7_TRIGGER:
+        if state is AppState.WAITING_VIDEO6_TRIGGER:
             return {"enabled": True, "expected_gesture": GestureName.CLOSED_FIST, "detect_marker": False, "prioritize_prayer_hands": False, "allow_double_closed_fist": False}
 
         if state is AppState.WAITING_VIDEO8_TRIGGER:
