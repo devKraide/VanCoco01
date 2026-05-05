@@ -79,12 +79,15 @@ class RobotComm:
             self._timers.append(timer)
         timer.start()
 
-    def reset_cocomag(self) -> None:
-        print("SENDING_COCOMAG_RESET")
-        if self._send_robot_command("COCOMAG", ROBOT_COMMAND_RESET):
-            return
+    def reset_presentation_robots(self) -> None:
+        self.reset_cocomag()
+        self.reset_cocovision()
 
-        print("[RobotComm] COCOMAG_RESET_NO_ACK: reset nao enviado; seguindo sem bloquear.")
+    def reset_cocomag(self) -> None:
+        self._reset_robot("COCOMAG")
+
+    def reset_cocovision(self) -> None:
+        self._reset_robot("COCOVISION")
 
     def poll_events(self) -> list[RobotEvent]:
         events: list[RobotEvent] = []
@@ -144,6 +147,13 @@ class RobotComm:
 
     def _mock_robots_enabled(self) -> bool:
         return MOCK_ROBOTS and not PRESENTATION_MODE
+
+    def _reset_robot(self, robot: str) -> None:
+        print(f"SENDING_{robot}_RESET")
+        if self._send_robot_command(robot, ROBOT_COMMAND_RESET):
+            return
+
+        print(f"[RobotComm] {robot}_RESET_NO_ACK: reset nao enviado; seguindo sem bloquear.")
 
     def _connect_robot(self, robot: str) -> None:
         if serial is None:
@@ -249,6 +259,8 @@ class RobotComm:
                 print("COCOMAG_RESET_ACK_RECEIVED")
             elif message == "COCOVISION_DONE":
                 self._emit_event(RobotEvent(robot="COCOVISION", status="DONE"))
+            elif message == "COCOVISION_RESET_DONE":
+                print("COCOVISION_RESET_ACK_RECEIVED")
             elif message in {"COLOR_RED", "COLOR_GREEN", "COLOR_BLUE"}:
                 if not self._accept_color_events:
                     continue
