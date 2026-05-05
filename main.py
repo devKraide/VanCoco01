@@ -562,7 +562,11 @@ class VanCocoApp:
             return self._gesture_mapper.map_gesture(vision_inputs.gesture)
 
         gesture_result = self._gesture_mapper.map_gesture(vision_inputs.gesture)
-        self._log_test_gesture_result(vision_inputs.gesture, gesture_result)
+        self._log_test_gesture_result(
+            raw_gesture=vision_inputs.gesture,
+            gesture_result=gesture_result,
+            vision_reason=vision_inputs.rejection_reason,
+        )
         return gesture_result
 
     def _read_video8_trigger_source(self, vision_inputs):
@@ -584,17 +588,24 @@ class VanCocoApp:
         self,
         raw_gesture: GestureName | None,
         gesture_result: GestureResult | None,
+        vision_reason: str | None,
     ) -> None:
         state = self._state_manager.state
         expected_gesture = self._story_engine.current_expected_gesture()
         stable_gesture = self._gesture_mapper.stable_gesture
         result_text = "ACCEPTED" if gesture_result is not None else "REJECTED"
+        reason = self._test_gesture_reason(
+            raw_gesture=raw_gesture,
+            gesture_result=gesture_result,
+            vision_reason=vision_reason,
+        )
         snapshot = (
             state,
             expected_gesture,
             raw_gesture,
             stable_gesture,
             result_text,
+            reason,
         )
         if snapshot == self._last_test_gesture_snapshot:
             return
@@ -606,7 +617,8 @@ class VanCocoApp:
             f"expected={self._format_gesture(expected_gesture)} "
             f"raw={self._format_gesture(raw_gesture)} "
             f"stable={self._format_gesture(stable_gesture)} "
-            f"result={result_text}"
+            f"result={result_text} "
+            f"reason={reason}"
         )
         print(message)
 
@@ -624,12 +636,16 @@ class VanCocoApp:
 
         stable_trigger = trigger_name.value if trigger_name is not None else "NONE"
         result_text = "ACCEPTED" if trigger_name is not None else "REJECTED"
+        reason = "accepted" if trigger_name is not None else (
+            vision_inputs.rejection_reason or "requires_two_closed_fists"
+        )
         snapshot = (
             state,
             "MAGNIFIER_MARKER_DETECTED_OR_DOUBLE_CLOSED_FIST",
             raw_trigger,
             stable_trigger,
             result_text,
+            reason,
         )
         if snapshot == self._last_test_gesture_snapshot:
             return
@@ -641,9 +657,31 @@ class VanCocoApp:
             "expected=MAGNIFIER_MARKER_DETECTED_OR_DOUBLE_CLOSED_FIST "
             f"raw={raw_trigger} "
             f"stable={stable_trigger} "
-            f"result={result_text}"
+            f"result={result_text} "
+            f"reason={reason}"
         )
         print(message)
+
+    def _test_gesture_reason(
+        self,
+        raw_gesture: GestureName | None,
+        gesture_result: GestureResult | None,
+        vision_reason: str | None,
+    ) -> str:
+        if gesture_result is not None:
+            return "accepted"
+
+        if vision_reason is not None:
+            return vision_reason
+
+        if raw_gesture is None:
+            return "no_raw_gesture"
+
+        expected_gesture = self._story_engine.current_expected_gesture()
+        if expected_gesture is not None and raw_gesture is not expected_gesture:
+            return "wrong_expected_gesture"
+
+        return self._gesture_mapper.last_result_reason
 
     @staticmethod
     def _format_gesture(gesture: GestureName | None) -> str:

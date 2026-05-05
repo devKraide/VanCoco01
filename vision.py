@@ -31,6 +31,11 @@ from config import (
     VISION_PERF_LOG,
     VISION_PERF_LOG_EVERY,
     VISION_PROCESSING_SCALE,
+    VISION_ROI_ENABLED,
+    VISION_ROI_X_MAX_RATIO,
+    VISION_ROI_X_MIN_RATIO,
+    VISION_ROI_Y_MAX_RATIO,
+    VISION_ROI_Y_MIN_RATIO,
 )
 
 
@@ -77,6 +82,7 @@ class FingerState:
 class VisionInputs:
     gesture: Optional[GestureName]
     marker_detected: bool
+    rejection_reason: Optional[str] = None
 
 
 class GestureClassifier:
@@ -317,6 +323,7 @@ class VisionSystem:
         self._perf_frame_counter = 0
         self._ready_frames = 0
         self._is_ready = False
+        self._last_rejection_reason: Optional[str] = None
         self._warm_up_camera()
 
     def _open_camera(self):
@@ -399,6 +406,7 @@ class VisionSystem:
             expected_gesture,
             allow_double_closed_fist,
         )
+        rejection_reason = self._last_rejection_reason
         if detect_marker:
             marker_started_at = time.monotonic()
             marker_detected = self._detect_marker(frame)
@@ -417,7 +425,11 @@ class VisionSystem:
             pose_elapsed,
             marker_elapsed,
         )
-        return VisionInputs(gesture=gesture, marker_detected=marker_detected)
+        return VisionInputs(
+            gesture=gesture,
+            marker_detected=marker_detected,
+            rejection_reason=rejection_reason,
+        )
 
     def detect_gesture(
         self,
@@ -470,19 +482,32 @@ class VisionSystem:
         expected_gesture: Optional[GestureName],
         allow_double_closed_fist: bool,
     ) -> Optional[GestureName]:
+        self._last_rejection_reason = None
         if prioritize_prayer_hands and self._detect_prayer_hands(pose_result):
-            return GestureName.PRAYER_HANDS
+            if self._pose_hands_center_in_roi(pose_result):
+                return GestureName.PRAYER_HANDS
+            self._last_rejection_reason = "outside_roi"
 
         if hands_result is not None and hands_result.multi_hand_landmarks:
-            if allow_double_closed_fist and len(hands_result.multi_hand_landmarks) >= 2:
+            if allow_double_closed_fist and expected_gesture is None:
+                if len(hands_result.multi_hand_landmarks) < 2:
+                    self._last_rejection_reason = "requires_two_closed_fists"
+                    return None
+
+                first_hand = hands_result.multi_hand_landmarks[0]
+                second_hand = hands_result.multi_hand_landmarks[1]
+                if not self._hand_center_in_roi(first_hand) or not self._hand_center_in_roi(second_hand):
+                    self._last_rejection_reason = "outside_roi"
+                    return None
+
                 first_gesture = self._classifier.classify(
-                    hands_result.multi_hand_landmarks[0],
+                    first_hand,
                     image_width,
                     image_height,
                     GestureName.CLOSED_FIST,
                 )
                 second_gesture = self._classifier.classify(
-                    hands_result.multi_hand_landmarks[1],
+                    second_hand,
                     image_width,
                     image_height,
                     GestureName.CLOSED_FIST,
@@ -493,7 +518,14 @@ class VisionSystem:
                 ):
                     return GestureName.DOUBLE_CLOSED_FIST
 
+                self._last_rejection_reason = "requires_two_closed_fists"
+                return None
+
             for hand_landmarks in hands_result.multi_hand_landmarks[:1]:
+                if not self._hand_center_in_roi(hand_landmarks):
+                    self._last_rejection_reason = "outside_roi"
+                    return None
+
                 gesture = self._classifier.classify(
                     hand_landmarks,
                     image_width,
@@ -509,10 +541,26 @@ class VisionSystem:
                 }:
                     return gesture
 
+                self._last_rejection_reason = "wrong_expected_gesture"
+
         if self._detect_prayer_hands(pose_result):
-            return GestureName.PRAYER_HANDS
+            if self._pose_hands_center_in_roi(pose_result):
+                return GestureName.PRAYER_HANDS
+            self._last_rejection_reason = "outside_roi"
 
         return None
+
+    @staticmethod
+    def _hand_center_in_roi(hand_landmarks) -> bool:
+        if not VISION_ROI_ENABLED:
+            return True
+
+        center_x = sum(point.x for point in hand_landmarks.landmark) / len(hand_landmarks.landmark)
+        center_y = sum(point.y for point in hand_landmarks.landmark) / len(hand_landmarks.landmark)
+        return (
+            VISION_ROI_X_MIN_RATIO <= center_x <= VISION_ROI_X_MAX_RATIO
+            and VISION_ROI_Y_MIN_RATIO <= center_y <= VISION_ROI_Y_MAX_RATIO
+        )
 
     def _detect_prayer_hands(self, pose_result) -> bool:
         if pose_result is None or pose_result.pose_landmarks is None:
@@ -567,6 +615,24 @@ class VisionSystem:
             return False
 
         return True
+
+    @staticmethod
+    def _pose_hands_center_in_roi(pose_result) -> bool:
+        if not VISION_ROI_ENABLED:
+            return True
+
+        if pose_result is None or pose_result.pose_landmarks is None:
+            return False
+
+        landmarks = pose_result.pose_landmarks.landmark
+        left_wrist = landmarks[15]
+        right_wrist = landmarks[16]
+        center_x = (left_wrist.x + right_wrist.x) / 2.0
+        center_y = (left_wrist.y + right_wrist.y) / 2.0
+        return (
+            VISION_ROI_X_MIN_RATIO <= center_x <= VISION_ROI_X_MAX_RATIO
+            and VISION_ROI_Y_MIN_RATIO <= center_y <= VISION_ROI_Y_MAX_RATIO
+        )
 
     def _debug_detection(
         self,
