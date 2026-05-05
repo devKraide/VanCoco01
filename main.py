@@ -88,6 +88,10 @@ class VanCocoApp:
                     self._handle_waiting_video6_trigger_state(key_code, vision_inputs)
                     continue
 
+                if self._state_manager.state is AppState.WAITING_COCOVISION_RETURN_COMPLETION:
+                    self._handle_waiting_cocovision_return_completion_state()
+                    continue
+
                 if self._state_manager.state is AppState.WAITING_VIDEO8_TRIGGER:
                     self._handle_waiting_video8_trigger_state(vision_inputs)
                     continue
@@ -112,6 +116,7 @@ class VanCocoApp:
             AppState.WAITING_COCOVISION_ACTION_COMPLETION,
             AppState.WAITING_COLOR,
             AppState.WAITING_VIDEO6_TRIGGER,
+            AppState.WAITING_COCOVISION_RETURN_COMPLETION,
             AppState.WAITING_VIDEO8_TRIGGER,
             AppState.WAITING_VIDEO9_TRIGGER,
         }:
@@ -149,12 +154,19 @@ class VanCocoApp:
 
         self._media_controller.stop_video()
         # Color videos are a loopable branch: after each one finishes, the app may return to WAITING_COLOR.
-        if self._story_engine.consume_color_video_finished():
+        color_transition = self._story_engine.consume_color_video_finished()
+        if color_transition is not None:
             self._robot_comm.clear_color_events()
-            self._robot_comm.set_color_events_enabled(True)
-            if self._story_engine.is_waiting_video8_trigger():
-                self._state_manager.enter_waiting_video8_trigger()
+            if self._story_engine.is_waiting_cocovision_return_completion():
+                self._robot_comm.set_color_events_enabled(False)
+                for robot_name, command in color_transition.robot_commands:
+                    if robot_name == "COCOVISION" and command == "RETURN":
+                        print("SENDING_COCOVISION_RETURN")
+                    self._robot_comm.send_command(robot_name, command)
+                print("WAITING_COCOVISION_RETURN_DONE")
+                self._state_manager.enter_waiting_cocovision_return_completion()
                 return
+            self._robot_comm.set_color_events_enabled(True)
             self._state_manager.enter_waiting_color()
             return
 
@@ -300,6 +312,16 @@ class VanCocoApp:
 
         self._media_controller.start_mock_video(2.0)
 
+    def _handle_waiting_cocovision_return_completion_state(self) -> None:
+        for event in self._robot_comm.poll_events():
+            transition = self._story_engine.consume_cocovision_return_result(event)
+            if not self._story_engine.is_waiting_video8_trigger():
+                continue
+
+            print("COCOVISION_RETURN_DONE_RECEIVED")
+            self._state_manager.enter_waiting_video8_trigger()
+            return
+
     def _handle_waiting_video8_trigger_state(self, vision_inputs) -> None:
         trigger_name = self._read_video8_trigger_source(vision_inputs)
         transition = self._story_engine.consume_video8_trigger(trigger_name)
@@ -383,6 +405,13 @@ class VanCocoApp:
         if state is AppState.WAITING_COLOR:
             self._apply_fallback_robot_event(RobotEvent(robot="COCOVISION", status="COLOR_BLUE"))
             print("CENTRAL_FALLBACK_ACCEPTED: COLOR_BLUE in waiting_color")
+            return
+
+        if state is AppState.WAITING_COCOVISION_RETURN_COMPLETION:
+            self._apply_fallback_robot_event(RobotEvent(robot="COCOVISION", status="DONE"))
+            print(
+                "CENTRAL_FALLBACK_ACCEPTED: COCOVISION_DONE in waiting_cocovision_return_completion"
+            )
             return
 
         if state is AppState.WAITING_VIDEO8_TRIGGER:
@@ -504,6 +533,15 @@ class VanCocoApp:
                 self._media_controller.start_video(transition.video_path)
             else:
                 self._media_controller.start_mock_video(transition.mock_video_duration)
+            return
+
+        if state is AppState.WAITING_COCOVISION_RETURN_COMPLETION:
+            self._story_engine.consume_cocovision_return_result(event)
+            if not self._story_engine.is_waiting_video8_trigger():
+                return
+
+            print("COCOVISION_RETURN_DONE_RECEIVED")
+            self._state_manager.enter_waiting_video8_trigger()
             return
 
     def _apply_fallback_video8_trigger(self, trigger_name: CameraTriggerName) -> None:

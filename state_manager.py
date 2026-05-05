@@ -85,6 +85,10 @@ class StateManager:
         self._active_request = None
         self._state = AppState.WAITING_VIDEO6_TRIGGER
 
+    def enter_waiting_cocovision_return_completion(self) -> None:
+        self._active_request = None
+        self._state = AppState.WAITING_COCOVISION_RETURN_COMPLETION
+
     def enter_waiting_video8_trigger(self) -> None:
         self._active_request = None
         self._state = AppState.WAITING_VIDEO8_TRIGGER

@@ -15,6 +15,7 @@ from config import (
     MOCK_VIDEO_DURATION_SECONDS,
     ROBOT_COMMAND_ACTION,
     ROBOT_COMMAND_PRESENT,
+    ROBOT_COMMAND_RETURN,
     ROBOT_NAMES,
     VIDEO3_PATH,
     VIDEO4_PATH,
@@ -35,6 +36,7 @@ class StoryStage(Enum):
     WAITING_COLOR = "waiting_color"
     PLAYING_COLOR_VIDEO = "playing_color_video"
     WAITING_VIDEO6_TRIGGER = "waiting_video6_trigger"
+    WAITING_COCOVISION_RETURN_COMPLETION = "waiting_cocovision_return_completion"
     WAITING_VIDEO8_TRIGGER = "waiting_video8_trigger"
     WAITING_VIDEO9_TRIGGER = "waiting_video9_trigger"
     LOCKED_END = "locked_end"
@@ -141,6 +143,16 @@ class StoryEngine:
         self._stage = StoryStage.WAITING_COLOR
         return StoryTransition()
 
+    def consume_cocovision_return_result(self, event: RobotEvent) -> StoryTransition:
+        if self._stage is not StoryStage.WAITING_COCOVISION_RETURN_COMPLETION:
+            return StoryTransition()
+
+        if event.robot != "COCOVISION" or event.status != "DONE":
+            return StoryTransition()
+
+        self._stage = StoryStage.WAITING_VIDEO8_TRIGGER
+        return StoryTransition()
+
     def consume_video8_trigger(
         self,
         trigger_name: Optional[CameraTriggerName],
@@ -188,16 +200,18 @@ class StoryEngine:
             mock_video_duration=MOCK_VIDEO_DURATION_SECONDS,
         )
 
-    def consume_color_video_finished(self) -> bool:
+    def consume_color_video_finished(self) -> Optional[StoryTransition]:
         if self._stage is not StoryStage.PLAYING_COLOR_VIDEO:
-            return False
+            return None
 
         if self._consumed_colors == set(COLOR_VIDEO_PATHS):
-            self._stage = StoryStage.WAITING_VIDEO8_TRIGGER
-            return True
+            self._stage = StoryStage.WAITING_COCOVISION_RETURN_COMPLETION
+            return StoryTransition(
+                robot_commands=(("COCOVISION", ROBOT_COMMAND_RETURN),),
+            )
 
         self._stage = StoryStage.WAITING_COLOR
-        return True
+        return StoryTransition()
 
     def is_waiting_cocomag_action(self) -> bool:
         return self._stage is StoryStage.WAITING_COCOMAG_ACTION
@@ -213,6 +227,9 @@ class StoryEngine:
 
     def is_waiting_video6_trigger(self) -> bool:
         return self._stage is StoryStage.WAITING_VIDEO6_TRIGGER
+
+    def is_waiting_cocovision_return_completion(self) -> bool:
+        return self._stage is StoryStage.WAITING_COCOVISION_RETURN_COMPLETION
 
     def is_waiting_video8_trigger(self) -> bool:
         return self._stage is StoryStage.WAITING_VIDEO8_TRIGGER

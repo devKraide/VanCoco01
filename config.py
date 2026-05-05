@@ -21,6 +21,7 @@ class AppState(Enum):
     WAITING_COCOVISION_ACTION_COMPLETION = "waiting_cocovision_action_completion"
     WAITING_COLOR = "waiting_color"
     WAITING_VIDEO6_TRIGGER = "waiting_video6_trigger"
+    WAITING_COCOVISION_RETURN_COMPLETION = "waiting_cocovision_return_completion"
     WAITING_VIDEO8_TRIGGER = "waiting_video8_trigger"
     WAITING_VIDEO9_TRIGGER = "waiting_video9_trigger"
 
@@ -110,6 +111,7 @@ VISION_GESTURE_DEBUG = False
 ROBOT_NAMES = ("COCOMAG", "COCOVISION")
 ROBOT_COMMAND_PRESENT = "PRESENT"
 ROBOT_COMMAND_ACTION = "ACTION"
+ROBOT_COMMAND_RETURN = "RETURN"
 ROBOT_COMMAND_RESET = "RESET"
 MOCK_VIDEO_DURATION_SECONDS = 2.0
 PRESENTATION_MODE = True
