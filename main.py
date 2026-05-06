@@ -675,6 +675,11 @@ class VanCocoApp:
             return
 
         self._last_test_gesture_snapshot = snapshot
+        if expected_gesture is GestureName.CLOSED_FIST:
+            if gesture_result is not None:
+                print("CLOSED_FIST_ACCEPTED")
+            elif reason in {"index_open", "fingers_not_confidently_folded"}:
+                print(f"CLOSED_FIST_REJECTED reason={reason}")
         message = (
             "TEST_GESTURES "
             f"state={state.value} "

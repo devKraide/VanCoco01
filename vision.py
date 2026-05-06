@@ -118,7 +118,11 @@ class GestureClassifier:
             return GestureName.POINT if candidates[GestureName.POINT] else None
 
         if expected_gesture is GestureName.CLOSED_FIST:
-            return GestureName.CLOSED_FIST if candidates[GestureName.CLOSED_FIST] else None
+            return (
+                GestureName.CLOSED_FIST
+                if self.closed_fist_rejection_reason(finger_state) is None
+                else None
+            )
 
         for gesture_name in (
             GestureName.HAND_OPEN,
@@ -289,16 +293,26 @@ class GestureClassifier:
 
     @staticmethod
     def _is_closed_fist(finger_state: FingerState) -> bool:
-        return all(
-            (
-                finger_state.is_complete,
-                not finger_state.index_open,
-                not finger_state.middle_open,
-                not finger_state.ring_open,
-                not finger_state.pinky_open,
-                not finger_state.thumb_up,
-            )
-        )
+        return GestureClassifier.closed_fist_rejection_reason(finger_state) is None
+
+    @staticmethod
+    def closed_fist_rejection_reason(finger_state: FingerState) -> Optional[str]:
+        if not finger_state.is_complete:
+            return "fingers_not_confidently_folded"
+
+        if finger_state.index_open:
+            return "index_open"
+
+        if (
+            finger_state.middle_open
+            or finger_state.ring_open
+            or finger_state.pinky_open
+            or finger_state.curled_fingers < 4
+            or finger_state.thumb_up
+        ):
+            return "fingers_not_confidently_folded"
+
+        return None
 
 
 class VisionSystem:
@@ -543,6 +557,21 @@ class VisionSystem:
                 if quality_reason is not None:
                     self._last_rejection_reason = quality_reason
                     return None
+
+                if expected_gesture is GestureName.CLOSED_FIST:
+                    finger_state, _ = self._classifier.describe_hand(
+                        hand_landmarks,
+                        image_width,
+                        image_height,
+                    )
+                    closed_fist_reason = self._classifier.closed_fist_rejection_reason(
+                        finger_state
+                    )
+                    if closed_fist_reason is not None:
+                        self._last_rejection_reason = closed_fist_reason
+                        return None
+
+                    return GestureName.CLOSED_FIST
 
                 gesture = self._classifier.classify(
                     hand_landmarks,
