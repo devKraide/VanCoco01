@@ -90,6 +90,7 @@ enum class RequestedCommand : uint8_t {
   ACTION = 2,
   RETURN = 3,
   COLOR_BLUE = 4,
+  COLOR_CONFIRMED = 5,
 };
 
 LocalStage localStage = LocalStage::READY_FOR_PRESENT;
@@ -216,6 +217,11 @@ void handleCommand(const String& command) {
     return;
   }
 
+  if (normalized == "COCOVISION:COLOR_CONFIRMED") {
+    handleTrigger("BT", RequestedCommand::COLOR_CONFIRMED);
+    return;
+  }
+
   if (normalized == "COCOVISION:RESET") {
     handleResetCommand();
   }
@@ -296,6 +302,12 @@ void handleTrigger(const char* source, RequestedCommand requestedCommand) {
   Serial.print("TRIGGER_SOURCE=");
   Serial.println(source);
 
+  if (requestedCommand == RequestedCommand::COLOR_CONFIRMED && localStage != LocalStage::WAITING_FOR_COLOR) {
+    Serial.println("COLOR_CONFIRMED_IGNORED_STATE");
+    logIgnoredTrigger(source);
+    return;
+  }
+
   if (isPresenting) {
     logIgnoredTrigger(source);
     return;
@@ -322,6 +334,15 @@ void handleTrigger(const char* source, RequestedCommand requestedCommand) {
   }
 
   if (localStage == LocalStage::WAITING_FOR_COLOR) {
+    if (requestedCommand == RequestedCommand::COLOR_CONFIRMED) {
+      sensorActive = false;
+      colorAlreadySent = true;
+      localStage = LocalStage::READY_FOR_RETURN;
+      Serial.println("COLOR_CONFIRMED_ACCEPTED");
+      emitLine("COCOVISION_COLOR_CONFIRMED_DONE");
+      return;
+    }
+
     if (requestedCommand != RequestedCommand::COLOR_BLUE && requestedCommand != RequestedCommand::ANY) {
       logIgnoredTrigger(source);
       return;

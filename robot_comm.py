@@ -261,6 +261,8 @@ class RobotComm:
                 self._emit_event(RobotEvent(robot="COCOVISION", status="DONE"))
             elif message == "COCOVISION_RESET_DONE":
                 print("COCOVISION_RESET_ACK_RECEIVED")
+            elif message == "COCOVISION_COLOR_CONFIRMED_DONE":
+                print("COCOVISION_COLOR_CONFIRMED_DONE_RECEIVED")
             elif message in {"COLOR_RED", "COLOR_GREEN", "COLOR_BLUE"}:
                 if not self._accept_color_events:
                     continue

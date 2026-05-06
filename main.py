@@ -6,6 +6,7 @@ from config import (
     ENABLE_DOUBLE_CLOSED_FIST_FOR_VIDEO8,
     EXIT_KEYS,
     GestureName,
+    ROBOT_COMMAND_COLOR_CONFIRMED,
     TEST_GESTURES_MODE,
     VIDEO_ACTIONS,
 )
@@ -406,6 +407,8 @@ class VanCocoApp:
 
         if state is AppState.WAITING_COLOR:
             self._apply_fallback_robot_event(RobotEvent(robot="COCOVISION", status="COLOR_BLUE"))
+            if self._state_manager.state is AppState.PLAYING_VIDEO:
+                self._send_cocovision_color_confirmed()
             print("CENTRAL_FALLBACK_ACCEPTED: COLOR_BLUE in waiting_color")
             return
 
@@ -422,6 +425,10 @@ class VanCocoApp:
             return
 
         print(f"CENTRAL_FALLBACK_REJECTED in {state_name}")
+
+    def _send_cocovision_color_confirmed(self) -> None:
+        print("SENDING_COCOVISION_COLOR_CONFIRMED")
+        self._robot_comm.send_command("COCOVISION", ROBOT_COMMAND_COLOR_CONFIRMED)
 
     def _apply_fallback_gesture(self, gesture: GestureName) -> bool:
         gesture_result = GestureResult(gesture=gesture, action=VIDEO_ACTIONS.get(gesture))
