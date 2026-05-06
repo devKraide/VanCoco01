@@ -27,6 +27,10 @@ from config import (
     PRAYER_WRIST_DISTANCE_RATIO,
     TRACKING_CONFIDENCE,
     VISION_GESTURE_DEBUG,
+    VISION_HAND_BORDER_MARGIN_RATIO,
+    VISION_HAND_QUALITY_ENABLED,
+    VISION_HAND_MIN_LANDMARKS_IN_ROI_RATIO,
+    VISION_HAND_MIN_PALM_RATIO,
     VISION_READY_FRAMES,
     VISION_PERF_LOG,
     VISION_PERF_LOG_EVERY,
@@ -76,6 +80,7 @@ class FingerState:
     middle_open: bool
     ring_open: bool
     pinky_open: bool
+    curled_fingers: int
 
 
 @dataclass(frozen=True)
@@ -209,6 +214,14 @@ class GestureClassifier:
             middle_open=middle_tip_y < middle_pip_y and middle_reach > 0.9,
             ring_open=ring_tip_y < ring_pip_y and ring_reach > 0.85,
             pinky_open=pinky_tip_y < pinky_pip_y and pinky_reach > 0.8,
+            curled_fingers=sum(
+                (
+                    index_reach < 0.75 and index_tip_y > index_mcp_y,
+                    middle_reach < 0.75 and middle_tip_y > middle_mcp_y,
+                    ring_reach < 0.75 and ring_tip_y > ring_mcp_y,
+                    pinky_reach < 0.75 and pinky_tip_y > pinky_mcp_y,
+                )
+            ),
         )
 
     @staticmethod
@@ -243,6 +256,7 @@ class GestureClassifier:
                 not finger_state.ring_open,
                 not finger_state.pinky_open,
                 not finger_state.thumb_up,
+                finger_state.curled_fingers >= 3,
             )
         )
 
@@ -496,8 +510,10 @@ class VisionSystem:
 
                 first_hand = hands_result.multi_hand_landmarks[0]
                 second_hand = hands_result.multi_hand_landmarks[1]
-                if not self._hand_center_in_roi(first_hand) or not self._hand_center_in_roi(second_hand):
-                    self._last_rejection_reason = "outside_roi"
+                first_quality_reason = self._hand_quality_rejection_reason(first_hand)
+                second_quality_reason = self._hand_quality_rejection_reason(second_hand)
+                if first_quality_reason is not None or second_quality_reason is not None:
+                    self._last_rejection_reason = first_quality_reason or second_quality_reason
                     return None
 
                 first_gesture = self._classifier.classify(
@@ -522,8 +538,9 @@ class VisionSystem:
                 return None
 
             for hand_landmarks in hands_result.multi_hand_landmarks[:1]:
-                if not self._hand_center_in_roi(hand_landmarks):
-                    self._last_rejection_reason = "outside_roi"
+                quality_reason = self._hand_quality_rejection_reason(hand_landmarks)
+                if quality_reason is not None:
+                    self._last_rejection_reason = quality_reason
                     return None
 
                 gesture = self._classifier.classify(
@@ -551,16 +568,58 @@ class VisionSystem:
         return None
 
     @staticmethod
-    def _hand_center_in_roi(hand_landmarks) -> bool:
-        if not VISION_ROI_ENABLED:
-            return True
+    def _hand_quality_rejection_reason(hand_landmarks) -> Optional[str]:
+        if not VISION_HAND_QUALITY_ENABLED:
+            return None
 
-        center_x = sum(point.x for point in hand_landmarks.landmark) / len(hand_landmarks.landmark)
-        center_y = sum(point.y for point in hand_landmarks.landmark) / len(hand_landmarks.landmark)
-        return (
+        landmarks = hand_landmarks.landmark
+        key_indices = (0, 4, 8, 12, 16, 20)
+        if any(
+            not (0.0 <= landmarks[index].x <= 1.0 and 0.0 <= landmarks[index].y <= 1.0)
+            for index in key_indices
+        ):
+            return "low_quality_hand"
+
+        x_values = [point.x for point in landmarks]
+        y_values = [point.y for point in landmarks]
+        if (
+            min(x_values) < VISION_HAND_BORDER_MARGIN_RATIO
+            or max(x_values) > 1.0 - VISION_HAND_BORDER_MARGIN_RATIO
+            or min(y_values) < VISION_HAND_BORDER_MARGIN_RATIO
+            or max(y_values) > 1.0 - VISION_HAND_BORDER_MARGIN_RATIO
+        ):
+            return "low_quality_hand"
+
+        palm_size = max(
+            hypot(landmarks[0].x - landmarks[9].x, landmarks[0].y - landmarks[9].y),
+            hypot(landmarks[5].x - landmarks[17].x, landmarks[5].y - landmarks[17].y),
+        )
+        if palm_size < VISION_HAND_MIN_PALM_RATIO:
+            return "low_quality_hand"
+
+        if not VISION_ROI_ENABLED:
+            return None
+
+        center_x = sum(x_values) / len(x_values)
+        center_y = sum(y_values) / len(y_values)
+        if not (
             VISION_ROI_X_MIN_RATIO <= center_x <= VISION_ROI_X_MAX_RATIO
             and VISION_ROI_Y_MIN_RATIO <= center_y <= VISION_ROI_Y_MAX_RATIO
+        ):
+            return "outside_roi"
+
+        landmarks_inside_roi = sum(
+            1
+            for point in landmarks
+            if (
+                VISION_ROI_X_MIN_RATIO <= point.x <= VISION_ROI_X_MAX_RATIO
+                and VISION_ROI_Y_MIN_RATIO <= point.y <= VISION_ROI_Y_MAX_RATIO
+            )
         )
+        if landmarks_inside_roi / len(landmarks) < VISION_HAND_MIN_LANDMARKS_IN_ROI_RATIO:
+            return "outside_roi"
+
+        return None
 
     def _detect_prayer_hands(self, pose_result) -> bool:
         if pose_result is None or pose_result.pose_landmarks is None:

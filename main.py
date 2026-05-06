@@ -571,17 +571,20 @@ class VanCocoApp:
 
     def _read_video8_trigger_source(self, vision_inputs):
         trigger_name = None
+        gesture_result = None
         if vision_inputs.marker_detected:
             trigger_name = CameraTriggerName.MAGNIFIER_MARKER_DETECTED
 
-        elif (
-            ENABLE_DOUBLE_CLOSED_FIST_FOR_VIDEO8
-            and vision_inputs.gesture is GestureName.DOUBLE_CLOSED_FIST
-        ):
-            trigger_name = CameraTriggerName.DOUBLE_CLOSED_FIST_DETECTED
+        elif ENABLE_DOUBLE_CLOSED_FIST_FOR_VIDEO8:
+            gesture_result = self._gesture_mapper.map_gesture(vision_inputs.gesture)
+            if (
+                gesture_result is not None
+                and gesture_result.gesture is GestureName.DOUBLE_CLOSED_FIST
+            ):
+                trigger_name = CameraTriggerName.DOUBLE_CLOSED_FIST_DETECTED
 
         if TEST_GESTURES_MODE:
-            self._log_test_video8_result(vision_inputs, trigger_name)
+            self._log_test_video8_result(vision_inputs, trigger_name, gesture_result)
         return trigger_name
 
     def _log_test_gesture_result(
@@ -626,6 +629,7 @@ class VanCocoApp:
         self,
         vision_inputs: VisionInputs,
         trigger_name: CameraTriggerName | None,
+        gesture_result: GestureResult | None,
     ) -> None:
         state = self._state_manager.state
         raw_trigger = "NONE"
@@ -636,9 +640,14 @@ class VanCocoApp:
 
         stable_trigger = trigger_name.value if trigger_name is not None else "NONE"
         result_text = "ACCEPTED" if trigger_name is not None else "REJECTED"
-        reason = "accepted" if trigger_name is not None else (
-            vision_inputs.rejection_reason or "requires_two_closed_fists"
-        )
+        if trigger_name is not None:
+            reason = "accepted"
+        elif vision_inputs.rejection_reason is not None:
+            reason = vision_inputs.rejection_reason
+        elif vision_inputs.gesture is GestureName.DOUBLE_CLOSED_FIST:
+            reason = self._gesture_mapper.last_result_reason
+        else:
+            reason = "requires_two_closed_fists"
         snapshot = (
             state,
             "MAGNIFIER_MARKER_DETECTED_OR_DOUBLE_CLOSED_FIST",
@@ -646,6 +655,7 @@ class VanCocoApp:
             stable_trigger,
             result_text,
             reason,
+            gesture_result.gesture if gesture_result is not None else None,
         )
         if snapshot == self._last_test_gesture_snapshot:
             return
