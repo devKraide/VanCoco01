@@ -19,6 +19,7 @@ from config import (
     CAMERA_TARGET_FPS,
     CAMERA_USE_MJPG,
     DETECTION_CONFIDENCE,
+    DOUBLE_CLOSED_FIST_ROI_Y_MAX_RATIO,
     GestureName,
     POSE_VISIBILITY_THRESHOLD,
     PRAYER_CENTER_OFFSET_RATIO,
@@ -505,36 +506,36 @@ class VisionSystem:
         if hands_result is not None and hands_result.multi_hand_landmarks:
             if allow_double_closed_fist and expected_gesture is None:
                 if len(hands_result.multi_hand_landmarks) < 2:
-                    self._last_rejection_reason = "requires_two_closed_fists"
+                    self._last_rejection_reason = "only_one_hand"
                     return None
 
                 first_hand = hands_result.multi_hand_landmarks[0]
                 second_hand = hands_result.multi_hand_landmarks[1]
-                first_quality_reason = self._hand_quality_rejection_reason(first_hand)
-                second_quality_reason = self._hand_quality_rejection_reason(second_hand)
+                first_quality_reason = self._double_fist_hand_rejection_reason(first_hand)
+                second_quality_reason = self._double_fist_hand_rejection_reason(second_hand)
                 if first_quality_reason is not None or second_quality_reason is not None:
                     self._last_rejection_reason = first_quality_reason or second_quality_reason
                     return None
 
-                first_gesture = self._classifier.classify(
+                first_state, first_candidates = self._classifier.describe_hand(
                     first_hand,
                     image_width,
                     image_height,
-                    GestureName.CLOSED_FIST,
                 )
-                second_gesture = self._classifier.classify(
+                second_state, second_candidates = self._classifier.describe_hand(
                     second_hand,
                     image_width,
                     image_height,
-                    GestureName.CLOSED_FIST,
                 )
                 if (
-                    first_gesture is GestureName.CLOSED_FIST
-                    and second_gesture is GestureName.CLOSED_FIST
+                    first_candidates[GestureName.CLOSED_FIST]
+                    and second_candidates[GestureName.CLOSED_FIST]
+                    and first_state.curled_fingers >= 4
+                    and second_state.curled_fingers >= 4
                 ):
                     return GestureName.DOUBLE_CLOSED_FIST
 
-                self._last_rejection_reason = "requires_two_closed_fists"
+                self._last_rejection_reason = "one_hand_not_closed"
                 return None
 
             for hand_landmarks in hands_result.multi_hand_landmarks[:1]:
@@ -564,6 +565,21 @@ class VisionSystem:
             if self._pose_hands_center_in_roi(pose_result):
                 return GestureName.PRAYER_HANDS
             self._last_rejection_reason = "outside_roi"
+
+        return None
+
+    def _double_fist_hand_rejection_reason(self, hand_landmarks) -> Optional[str]:
+        quality_reason = self._hand_quality_rejection_reason(hand_landmarks)
+        if quality_reason is not None:
+            return "hands_outside_roi" if quality_reason == "outside_roi" else quality_reason
+
+        if not VISION_ROI_ENABLED:
+            return None
+
+        landmarks = hand_landmarks.landmark
+        center_y = sum(point.y for point in landmarks) / len(landmarks)
+        if center_y > min(VISION_ROI_Y_MAX_RATIO, DOUBLE_CLOSED_FIST_ROI_Y_MAX_RATIO):
+            return "hands_outside_roi"
 
         return None
 
