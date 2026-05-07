@@ -13,6 +13,12 @@ import vlc
 from config import WINDOW_NAME
 
 
+VLC_ARGS = (
+    "--no-video-title-show",
+    "--avcodec-hw=none",
+)
+
+
 PYSIDE6_PATHS = list(getattr(PySide6, "__path__", []))
 if not PYSIDE6_PATHS:
     raise RuntimeError("Nao foi possivel localizar a instalacao do PySide6.")
@@ -85,7 +91,8 @@ class MediaController:
         self._is_running = True
         self._video_finished = False
         self._mock_video_deadline: Optional[float] = None
-        self._vlc_instance = vlc.Instance("--no-video-title-show")
+        self._vlc_instance = vlc.Instance(*VLC_ARGS)
+        print("VLC_HW_DECODING_DISABLED")
         self._media_player: Optional[vlc.MediaPlayer] = None
         self._window = PresentationWindow(self)
         self._window.showFullScreen()
