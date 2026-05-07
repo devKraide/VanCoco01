@@ -25,6 +25,8 @@ os.environ.setdefault("QT_PLUGIN_PATH", str(QT_PLUGINS_DIR))
 os.environ.setdefault("QT_QPA_PLATFORM_PLUGIN_PATH", str(QT_PLATFORMS_DIR))
 if platform.system() == "Darwin":
     os.environ.setdefault("QT_QPA_PLATFORM", "cocoa")
+elif platform.system() == "Linux":
+    os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPalette
@@ -71,7 +73,8 @@ class PresentationWindow(QWidget):
         self._video_surface.setAutoFillBackground(True)
         self._video_surface.setPalette(palette)
         self._video_surface.setAttribute(Qt.WA_NativeWindow, True)
-        self._video_surface.hide()
+        self._video_surface.setAttribute(Qt.WA_DontCreateNativeAncestors, True)
+        self._video_surface.show()
 
 
 class MediaController:
@@ -86,12 +89,16 @@ class MediaController:
         self._media_player: Optional[vlc.MediaPlayer] = None
         self._window = PresentationWindow(self)
         self._window.showFullScreen()
+        self._window.video_surface.setGeometry(self._window.rect())
+        self._window.video_surface.winId()
+        self._app.processEvents()
 
     def show_black_screen(self) -> None:
-        self._window.video_surface.hide()
+        self._window.video_surface.show()
         self._window.showFullScreen()
         self._window.raise_()
         self._window.activateWindow()
+        self._app.processEvents()
 
     def start_video(self, video_path: Path) -> None:
         self.stop_video()
@@ -104,6 +111,7 @@ class MediaController:
         self._media_player = self._vlc_instance.media_player_new()
         self._media_player.set_media(media)
         self._window.video_surface.show()
+        self._app.processEvents()
         self._bind_player_to_window()
         self._attach_player_events()
         self._media_player.play()
@@ -112,7 +120,7 @@ class MediaController:
         self.stop_video()
         self._video_finished = False
         self._mock_video_deadline = time.monotonic() + duration_seconds
-        self._window.video_surface.hide()
+        self._window.video_surface.show()
 
     def stop_video(self) -> None:
         if self._media_player is not None:
