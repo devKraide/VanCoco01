@@ -242,13 +242,19 @@ class GestureClassifier:
 
     @staticmethod
     def _is_hand_open(finger_state: FingerState) -> bool:
-        return all(
+        open_fingers = sum(
             (
-                finger_state.is_complete,
                 finger_state.index_open,
                 finger_state.middle_open,
                 finger_state.ring_open,
-                finger_state.thumb_open or finger_state.pinky_open,
+                finger_state.pinky_open,
+            )
+        )
+        return all(
+            (
+                finger_state.is_complete,
+                open_fingers >= 3,
+                not finger_state.thumb_up,
             )
         )
 
