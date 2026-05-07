@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from config import (
     AppState,
     CameraTriggerName,
@@ -18,6 +20,9 @@ from state_manager import StateManager
 from vision import VisionInputs, VisionSystem
 
 
+IDLE_LOOP_SLEEP_SECONDS = 0.005
+
+
 class VanCocoApp:
     def __init__(self) -> None:
         self._state_manager = StateManager()
@@ -28,11 +33,13 @@ class VanCocoApp:
         self._robot_comm = RobotComm()
         self._presentation_robot_resets_sent = False
         self._last_test_gesture_snapshot = None
+        self._last_black_screen_state: AppState | None = None
 
     def run(self) -> None:
         try:
             self._send_robot_resets_before_idle()
             self._media_controller.show_black_screen()
+            self._last_black_screen_state = self._state_manager.state
             while not self._media_controller.should_close():
                 # Main orchestration loop: refresh UI, sample inputs, then dispatch by AppState.
                 self._media_controller.update_ui()
@@ -56,6 +63,7 @@ class VanCocoApp:
                     )
                 else:
                     vision_inputs = VisionInputs(gesture=None, marker_detected=False)
+                    time.sleep(IDLE_LOOP_SLEEP_SECONDS)
 
                 self._handle_central_fallback_triggers()
 
@@ -110,7 +118,8 @@ class VanCocoApp:
             self._vision_system.release()
 
     def _render_current_state(self) -> None:
-        if self._state_manager.state in {
+        state = self._state_manager.state
+        if state in {
             AppState.WARMING_UP,
             AppState.IDLE_BLACK_SCREEN,
             AppState.WAITING_COCOMAG_ACTION,
@@ -123,7 +132,14 @@ class VanCocoApp:
             AppState.WAITING_VIDEO8_TRIGGER,
             AppState.WAITING_VIDEO9_TRIGGER,
         }:
+            if self._last_black_screen_state is state:
+                return
+
             self._media_controller.show_black_screen()
+            self._last_black_screen_state = state
+            return
+
+        self._last_black_screen_state = None
 
     def _handle_warming_up_state(self) -> None:
         if not self._vision_system.poll_ready():
