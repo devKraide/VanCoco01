@@ -95,6 +95,7 @@ class MediaController:
 
     def show_black_screen(self) -> None:
         self._window.video_surface.show()
+        self._window.video_surface.setGeometry(0, 0, 1, 1)
         self._window.showFullScreen()
         self._window.raise_()
         self._window.activateWindow()
@@ -111,6 +112,7 @@ class MediaController:
         self._media_player = self._vlc_instance.media_player_new()
         self._media_player.set_media(media)
         self._window.video_surface.show()
+        self._window.video_surface.setGeometry(self._window.rect())
         self._app.processEvents()
         self._bind_player_to_window()
         self._attach_player_events()
@@ -121,6 +123,7 @@ class MediaController:
         self._video_finished = False
         self._mock_video_deadline = time.monotonic() + duration_seconds
         self._window.video_surface.show()
+        self._window.video_surface.setGeometry(0, 0, 1, 1)
 
     def stop_video(self) -> None:
         if self._media_player is not None:
