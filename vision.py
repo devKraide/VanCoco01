@@ -416,7 +416,7 @@ class VisionSystem:
             rgb_frame.flags.writeable = False
 
         if should_run_hands:
-            hands_runner = self._hands_double if allow_double_closed_fist else self._hands_single
+            hands_runner = self._hands_double
             hands_started_at = time.monotonic()
             hands_result = hands_runner.process(rgb_frame)
             hands_elapsed = time.monotonic() - hands_started_at
@@ -518,19 +518,23 @@ class VisionSystem:
             self._last_rejection_reason = "outside_roi"
 
         if hands_result is not None and hands_result.multi_hand_landmarks:
+            sorted_hands = self._hands_by_size(hands_result.multi_hand_landmarks)
             if allow_double_closed_fist and expected_gesture is None:
-                if len(hands_result.multi_hand_landmarks) < 2:
+                if len(sorted_hands) < 2:
                     self._last_rejection_reason = "only_one_hand"
                     return None
 
-                first_hand = hands_result.multi_hand_landmarks[0]
-                second_hand = hands_result.multi_hand_landmarks[1]
-                first_quality_reason = self._double_fist_hand_rejection_reason(first_hand)
-                second_quality_reason = self._double_fist_hand_rejection_reason(second_hand)
-                if first_quality_reason is not None or second_quality_reason is not None:
-                    self._last_rejection_reason = first_quality_reason or second_quality_reason
+                valid_hands = [
+                    hand_landmarks
+                    for hand_landmarks in sorted_hands
+                    if self._double_fist_hand_rejection_reason(hand_landmarks) is None
+                ]
+                if len(valid_hands) < 2:
+                    self._last_rejection_reason = "hands_outside_roi"
                     return None
 
+                first_hand = valid_hands[0]
+                second_hand = valid_hands[1]
                 first_state, first_candidates = self._classifier.describe_hand(
                     first_hand,
                     image_width,
@@ -552,7 +556,7 @@ class VisionSystem:
                 self._last_rejection_reason = "one_hand_not_closed"
                 return None
 
-            for hand_landmarks in hands_result.multi_hand_landmarks[:1]:
+            for hand_landmarks in sorted_hands[:1]:
                 quality_reason = self._hand_quality_rejection_reason(hand_landmarks)
                 if quality_reason is not None:
                     self._last_rejection_reason = quality_reason
@@ -596,6 +600,21 @@ class VisionSystem:
             self._last_rejection_reason = "outside_roi"
 
         return None
+
+    @staticmethod
+    def _hands_by_size(hand_landmarks_list) -> list:
+        return sorted(
+            hand_landmarks_list,
+            key=VisionSystem._hand_size,
+            reverse=True,
+        )
+
+    @staticmethod
+    def _hand_size(hand_landmarks) -> float:
+        landmarks = hand_landmarks.landmark
+        x_values = [point.x for point in landmarks]
+        y_values = [point.y for point in landmarks]
+        return (max(x_values) - min(x_values)) * (max(y_values) - min(y_values))
 
     def _double_fist_hand_rejection_reason(self, hand_landmarks) -> Optional[str]:
         quality_reason = self._hand_quality_rejection_reason(hand_landmarks)

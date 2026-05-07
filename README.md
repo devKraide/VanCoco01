@@ -101,6 +101,8 @@ sudo rfcomm release /dev/rfcomm1
 sudo rfcomm bind /dev/rfcomm0 08:A6:F7:BC:35:6E 1
 sudo rfcomm bind /dev/rfcomm1 3C:E9:0E:8C:02:EE 1
 ls -l /dev/rfcomm0 /dev/rfcomm1
+export COCOMAG_PORT=/dev/rfcomm0
+export COCOVISION_PORT=/dev/rfcomm1
 ```
 
 Padrao recomendado:
@@ -109,16 +111,6 @@ Padrao recomendado:
 - CocoVision: `/dev/rfcomm1`
 
 Se `rfcomm release` disser que a porta nao existe, pode ignorar.
-
-Configure as portas para o Python:
-
-```bash
-export COCOMAG_PORT=/dev/rfcomm0
-export COCOVISION_PORT=/dev/rfcomm1
-```
-
-Se algum robo estiver ligado por USB serial, use a porta correspondente, por
-exemplo `/dev/ttyUSB0` ou `/dev/ttyACM0`.
 
 ## Conectar Arduino Nano central
 
