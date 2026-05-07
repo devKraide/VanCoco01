@@ -16,6 +16,8 @@ from config import WINDOW_NAME
 VLC_ARGS = (
     "--no-video-title-show",
     "--avcodec-hw=none",
+    # ALSA avoids PipeWire/PulseAudio Bluetooth startup underruns on Ubuntu.
+    "--aout=alsa",
 )
 
 
@@ -93,6 +95,7 @@ class MediaController:
         self._mock_video_deadline: Optional[float] = None
         self._vlc_instance = vlc.Instance(*VLC_ARGS)
         print("VLC_HW_DECODING_DISABLED")
+        print("VLC_AUDIO_BACKEND=alsa")
         self._media_player: Optional[vlc.MediaPlayer] = None
         self._window = PresentationWindow(self)
         self._window.showFullScreen()
