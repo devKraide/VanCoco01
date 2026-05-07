@@ -26,6 +26,7 @@ from config import (
     PRAYER_CHEST_HEIGHT_MAX_RATIO,
     PRAYER_CHEST_HEIGHT_MIN_RATIO,
     PRAYER_WRIST_DISTANCE_RATIO,
+    TEST_GESTURES_MODE,
     TRACKING_CONFIDENCE,
     VISION_GESTURE_DEBUG,
     VISION_HAND_BORDER_MARGIN_RATIO,
@@ -556,6 +557,19 @@ class VisionSystem:
                 self._last_rejection_reason = "one_hand_not_closed"
                 return None
 
+            if expected_gesture in {
+                GestureName.HAND_OPEN,
+                GestureName.POINT,
+                GestureName.V_SIGN,
+                GestureName.THUMB_UP,
+            }:
+                return self._detect_expected_simple_gesture(
+                    sorted_hands,
+                    image_width,
+                    image_height,
+                    expected_gesture,
+                )
+
             for hand_landmarks in sorted_hands[:1]:
                 quality_reason = self._hand_quality_rejection_reason(hand_landmarks)
                 if quality_reason is not None:
@@ -600,6 +614,54 @@ class VisionSystem:
             self._last_rejection_reason = "outside_roi"
 
         return None
+
+    def _detect_expected_simple_gesture(
+        self,
+        sorted_hands: list,
+        image_width: int,
+        image_height: int,
+        expected_gesture: GestureName,
+    ) -> Optional[GestureName]:
+        for hand_landmarks in sorted_hands:
+            hand_size = self._hand_size(hand_landmarks)
+            quality_reason = self._hand_quality_rejection_reason(hand_landmarks)
+            if quality_reason is not None:
+                self._log_hand_selection_candidate(hand_size, None)
+                continue
+
+            gesture = self._classifier.classify(
+                hand_landmarks,
+                image_width,
+                image_height,
+                expected_gesture,
+            )
+            self._log_hand_selection_candidate(hand_size, gesture)
+            if gesture is expected_gesture:
+                self._log_hand_selection_accepted(gesture)
+                return gesture
+
+        self._last_rejection_reason = "no_candidate_matched_expected"
+        if TEST_GESTURES_MODE:
+            print("HAND_SELECTION_REJECTED reason=no_candidate_matched_expected")
+        return None
+
+    @staticmethod
+    def _log_hand_selection_candidate(
+        hand_size: float,
+        gesture: Optional[GestureName],
+    ) -> None:
+        if not TEST_GESTURES_MODE:
+            return
+
+        result = gesture.value if gesture is not None else "NONE"
+        print(f"HAND_SELECTION_CANDIDATE size={hand_size:.4f} result={result}")
+
+    @staticmethod
+    def _log_hand_selection_accepted(gesture: GestureName) -> None:
+        if not TEST_GESTURES_MODE:
+            return
+
+        print(f"HAND_SELECTION_ACCEPTED gesture={gesture.value}")
 
     @staticmethod
     def _hands_by_size(hand_landmarks_list) -> list:
