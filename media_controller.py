@@ -96,12 +96,15 @@ class MediaController:
         self._vlc_instance = vlc.Instance(*VLC_ARGS)
         print("VLC_HW_DECODING_DISABLED")
         print("VLC_AUDIO_BACKEND=alsa")
-        self._media_player: Optional[vlc.MediaPlayer] = None
+        self._media_player: Optional[vlc.MediaPlayer] = self._vlc_instance.media_player_new()
         self._window = PresentationWindow(self)
         self._window.showFullScreen()
         self._window.video_surface.setGeometry(self._window.rect())
         self._window.video_surface.winId()
         self._app.processEvents()
+        self._bind_player_to_window()
+        self._attach_player_events()
+        print("VLC_PLAYER_PERSISTENT_INIT")
 
     def show_black_screen(self) -> None:
         self._window.video_surface.show()
@@ -119,13 +122,12 @@ class MediaController:
         self._video_finished = False
         self._mock_video_deadline = None
         media = self._vlc_instance.media_new(str(video_path))
-        self._media_player = self._vlc_instance.media_player_new()
+        print(f"VLC_MEDIA_SET={video_path}")
         self._media_player.set_media(media)
         self._window.video_surface.show()
         self._window.video_surface.setGeometry(self._window.rect())
         self._app.processEvents()
-        self._bind_player_to_window()
-        self._attach_player_events()
+        print("VLC_PLAY_START")
         self._media_player.play()
 
     def start_mock_video(self, duration_seconds: float) -> None:
@@ -138,13 +140,16 @@ class MediaController:
     def stop_video(self) -> None:
         if self._media_player is not None:
             self._media_player.stop()
-            self._media_player.release()
-            self._media_player = None
+            print("VLC_STOP_NO_RELEASE")
         self._mock_video_deadline = None
         self.show_black_screen()
 
     def close(self) -> None:
         self.stop_video()
+        if self._media_player is not None:
+            self._media_player.release()
+            self._media_player = None
+            print("VLC_PLAYER_RELEASE_ON_CLOSE")
         self._window.close()
         self._app.quit()
 
