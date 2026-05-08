@@ -392,6 +392,9 @@ class VisionSystem:
         self._perf_frame_counter = 0
         self._ready_frames = 0
         self._is_ready = False
+        self._last_pipeline_name: Optional[str] = None
+        self._single_ready_logged = False
+        self._double_ready_logged = False
         self._last_rejection_reason: Optional[str] = None
         self._warm_up_camera()
 
@@ -456,7 +459,17 @@ class VisionSystem:
             rgb_frame.flags.writeable = False
 
         if should_run_hands:
-            hands_runner = self._hands_double
+            if allow_double_closed_fist:
+                hands_runner = self._hands_double
+                pipeline_name = "double"
+                if not self._double_ready_logged:
+                    self._hands_double.process(rgb_frame)
+                    self._double_ready_logged = True
+                    print("MEDIAPIPE_DOUBLE_READY")
+            else:
+                hands_runner = self._hands_single
+                pipeline_name = "single"
+            self._log_pipeline(pipeline_name)
             hands_started_at = time.monotonic()
             hands_result = hands_runner.process(rgb_frame)
             hands_elapsed = time.monotonic() - hands_started_at
@@ -534,12 +547,22 @@ class VisionSystem:
         rgb_frame = cv2.cvtColor(processing_frame, cv2.COLOR_BGR2RGB)
         rgb_frame.flags.writeable = False
         self._hands_single.process(rgb_frame)
+        if not self._single_ready_logged:
+            self._single_ready_logged = True
+            print("MEDIAPIPE_SINGLE_READY")
         self._ready_frames += 1
         if self._ready_frames >= VISION_READY_FRAMES:
             self._is_ready = True
             print("[Vision] ready")
 
         return self._is_ready
+
+    def _log_pipeline(self, pipeline_name: str) -> None:
+        if pipeline_name == self._last_pipeline_name:
+            return
+
+        self._last_pipeline_name = pipeline_name
+        print(f"VISION_PIPELINE={pipeline_name}")
 
     def _detect_gesture(
         self,
