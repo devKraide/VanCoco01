@@ -49,11 +49,22 @@ class PresentationWindow(QWidget):
         super().__init__()
         self._controller = controller
         self._video_surface = QWidget(self)
+        self._black_screen = QWidget(self)
         self._configure_window()
 
     @property
     def video_surface(self) -> QWidget:
         return self._video_surface
+
+    def show_black_screen(self) -> None:
+        self._video_surface.setGeometry(self.rect())
+        self._black_screen.setGeometry(self.rect())
+        self._black_screen.show()
+        self._black_screen.raise_()
+
+    def hide_black_screen(self) -> None:
+        self._black_screen.hide()
+        self._video_surface.raise_()
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key_Escape:
@@ -70,6 +81,7 @@ class PresentationWindow(QWidget):
 
     def resizeEvent(self, event) -> None:
         self._video_surface.setGeometry(self.rect())
+        self._black_screen.setGeometry(self.rect())
         super().resizeEvent(event)
 
     def _configure_window(self) -> None:
@@ -86,6 +98,11 @@ class PresentationWindow(QWidget):
         self._video_surface.setAttribute(Qt.WA_NativeWindow, True)
         self._video_surface.setAttribute(Qt.WA_DontCreateNativeAncestors, True)
         self._video_surface.show()
+
+        self._black_screen.setAutoFillBackground(True)
+        self._black_screen.setPalette(palette)
+        self._black_screen.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._black_screen.show()
 
 
 class MediaController:
@@ -108,15 +125,18 @@ class MediaController:
         self._app.processEvents()
         self._bind_player_to_window()
         self._attach_player_events()
+        print("VIDEO_SURFACE_PERSISTENT")
         print("VLC_PLAYER_PERSISTENT_INIT")
 
     def show_black_screen(self) -> None:
         self._window.video_surface.show()
-        self._window.video_surface.setGeometry(0, 0, 1, 1)
+        self._window.video_surface.setGeometry(self._window.rect())
+        self._window.show_black_screen()
         self._window.showFullScreen()
         self._window.raise_()
         self._window.activateWindow()
         self._app.processEvents()
+        print("BLACK_SCREEN_WITHOUT_SURFACE_RESIZE")
 
     def start_video(self, video_path: Path) -> None:
         self.stop_video()
@@ -130,6 +150,7 @@ class MediaController:
         self._media_player.set_media(media)
         self._window.video_surface.show()
         self._window.video_surface.setGeometry(self._window.rect())
+        self._window.hide_black_screen()
         self._app.processEvents()
         print("VLC_PLAY_START")
         self._media_player.play()
@@ -139,7 +160,8 @@ class MediaController:
         self._video_finished = False
         self._mock_video_deadline = time.monotonic() + duration_seconds
         self._window.video_surface.show()
-        self._window.video_surface.setGeometry(0, 0, 1, 1)
+        self._window.video_surface.setGeometry(self._window.rect())
+        self._window.show_black_screen()
 
     def stop_video(self) -> None:
         if self._media_player is not None:
