@@ -38,7 +38,7 @@ elif platform.system() == "Linux":
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 
 class PresentationWindow(QWidget):
@@ -46,6 +46,7 @@ class PresentationWindow(QWidget):
         super().__init__()
         self._controller = controller
         self._video_surface = QWidget(self)
+        self._status_label = QLabel(self)
         self._configure_window()
 
     @property
@@ -67,7 +68,17 @@ class PresentationWindow(QWidget):
 
     def resizeEvent(self, event) -> None:
         self._video_surface.setGeometry(self.rect())
+        self._status_label.setGeometry(self.rect())
         super().resizeEvent(event)
+
+    def show_status_text(self, text: str) -> None:
+        self._status_label.setText(text)
+        self._status_label.setGeometry(self.rect())
+        self._status_label.show()
+        self._status_label.raise_()
+
+    def hide_status_text(self) -> None:
+        self._status_label.hide()
 
     def _configure_window(self) -> None:
         self.setWindowTitle(WINDOW_NAME)
@@ -83,6 +94,10 @@ class PresentationWindow(QWidget):
         self._video_surface.setAttribute(Qt.WA_NativeWindow, True)
         self._video_surface.setAttribute(Qt.WA_DontCreateNativeAncestors, True)
         self._video_surface.show()
+
+        self._status_label.setAlignment(Qt.AlignCenter)
+        self._status_label.setStyleSheet("color: white; font-size: 28px;")
+        self._status_label.hide()
 
 
 class MediaController:
@@ -107,8 +122,18 @@ class MediaController:
         print("VLC_PLAYER_PERSISTENT_INIT")
 
     def show_black_screen(self) -> None:
+        self._window.hide_status_text()
         self._window.video_surface.show()
         self._window.video_surface.setGeometry(0, 0, 1, 1)
+        self._window.showFullScreen()
+        self._window.raise_()
+        self._window.activateWindow()
+        self._app.processEvents()
+
+    def show_warming_screen(self) -> None:
+        self._window.video_surface.show()
+        self._window.video_surface.setGeometry(0, 0, 1, 1)
+        self._window.show_status_text("Preparando sistema...")
         self._window.showFullScreen()
         self._window.raise_()
         self._window.activateWindow()
@@ -124,6 +149,7 @@ class MediaController:
         media = self._vlc_instance.media_new(str(video_path))
         print(f"VLC_MEDIA_SET={video_path}")
         self._media_player.set_media(media)
+        self._window.hide_status_text()
         self._window.video_surface.show()
         self._window.video_surface.setGeometry(self._window.rect())
         self._app.processEvents()

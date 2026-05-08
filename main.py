@@ -38,7 +38,8 @@ class VanCocoApp:
     def run(self) -> None:
         try:
             self._send_robot_resets_before_idle()
-            self._media_controller.show_black_screen()
+            print("SYSTEM_READY_STAGE=warming_up")
+            self._media_controller.show_warming_screen()
             self._last_black_screen_state = self._state_manager.state
             while not self._media_controller.should_close():
                 # Main orchestration loop: refresh UI, sample inputs, then dispatch by AppState.
@@ -119,8 +120,15 @@ class VanCocoApp:
 
     def _render_current_state(self) -> None:
         state = self._state_manager.state
+        if state is AppState.WARMING_UP:
+            if self._last_black_screen_state is state:
+                return
+
+            self._media_controller.show_warming_screen()
+            self._last_black_screen_state = state
+            return
+
         if state in {
-            AppState.WARMING_UP,
             AppState.IDLE_BLACK_SCREEN,
             AppState.WAITING_COCOMAG_ACTION,
             AppState.WAITING_COCOMAG_ACTION_COMPLETION,
@@ -145,8 +153,13 @@ class VanCocoApp:
         if not self._vision_system.poll_ready():
             return
 
+        print("SYSTEM_READY_STAGE=vision_ready")
         print("[Main] entering idle")
         self._state_manager.finish_warmup()
+        self._media_controller.show_black_screen()
+        self._last_black_screen_state = self._state_manager.state
+        print("FULLY_OPERATIONAL")
+        print("BLACK_SCREEN_IDLE_SHOWN")
 
     def _handle_idle_state(self, key_code: int, vision_inputs) -> None:
         gesture_result = self._story_engine.consume_trigger(
