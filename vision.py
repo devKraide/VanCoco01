@@ -82,6 +82,10 @@ class FingerState:
     middle_open: bool
     ring_open: bool
     pinky_open: bool
+    index_reach: float
+    middle_reach: float
+    ring_reach: float
+    pinky_reach: float
     curled_fingers: int
 
 
@@ -107,7 +111,9 @@ class GestureClassifier:
         candidates = self._candidate_matches(finger_state)
 
         if expected_gesture is GestureName.HAND_OPEN:
-            return GestureName.HAND_OPEN if candidates[GestureName.HAND_OPEN] else None
+            reason, extended_fingers = self._hand_open_rejection_reason(finger_state)
+            self._log_hand_open_result(extended_fingers, reason)
+            return GestureName.HAND_OPEN if reason is None else None
 
         if expected_gesture is GestureName.V_SIGN:
             return GestureName.V_SIGN if candidates[GestureName.V_SIGN] else None
@@ -220,6 +226,10 @@ class GestureClassifier:
             middle_open=middle_tip_y < middle_pip_y and middle_reach > 0.9,
             ring_open=ring_tip_y < ring_pip_y and ring_reach > 0.85,
             pinky_open=pinky_tip_y < pinky_pip_y and pinky_reach > 0.8,
+            index_reach=index_reach,
+            middle_reach=middle_reach,
+            ring_reach=ring_reach,
+            pinky_reach=pinky_reach,
             curled_fingers=sum(
                 (
                     index_reach < 0.75 and index_tip_y > index_mcp_y,
@@ -242,21 +252,44 @@ class GestureClassifier:
 
     @staticmethod
     def _is_hand_open(finger_state: FingerState) -> bool:
-        open_fingers = sum(
+        reason, _ = GestureClassifier._hand_open_rejection_reason(finger_state)
+        return reason is None
+
+    @staticmethod
+    def _hand_open_rejection_reason(finger_state: FingerState) -> tuple[Optional[str], int]:
+        extended_fingers = sum(
             (
-                finger_state.index_open,
-                finger_state.middle_open,
-                finger_state.ring_open,
-                finger_state.pinky_open,
+                finger_state.index_reach >= 0.95,
+                finger_state.middle_reach >= 0.95,
+                finger_state.ring_reach >= 0.9,
+                finger_state.pinky_reach >= 0.85,
             )
         )
-        return all(
-            (
-                finger_state.is_complete,
-                open_fingers >= 3,
-                not finger_state.thumb_up,
-            )
-        )
+
+        if not finger_state.is_complete:
+            return "low_quality_hand", extended_fingers
+
+        if finger_state.thumb_up:
+            return "thumb_up_like", extended_fingers
+
+        if finger_state.curled_fingers >= 3:
+            return "closed_fist_like", extended_fingers
+
+        if extended_fingers < 3:
+            return "fingers_not_extended", extended_fingers
+
+        return None, extended_fingers
+
+    @staticmethod
+    def _log_hand_open_result(extended_fingers: int, reason: Optional[str]) -> None:
+        if not TEST_GESTURES_MODE:
+            return
+
+        print(f"HAND_OPEN_REACH fingers={extended_fingers}/4")
+        if reason is None:
+            print("HAND_OPEN_ACCEPTED")
+        else:
+            print(f"HAND_OPEN_REJECTED reason={reason}")
 
     @staticmethod
     def _is_point(finger_state: FingerState) -> bool:
