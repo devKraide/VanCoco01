@@ -637,13 +637,11 @@ class VanCocoApp:
             return
 
         self._last_test_gesture_snapshot = snapshot
-        if trigger_name is CameraTriggerName.DOUBLE_CLOSED_FIST_DETECTED:
-            print("DOUBLE_FIST_ACCEPTED")
-        elif (
-            not vision_inputs.marker_detected
-            and reason in {"only_one_hand", "one_hand_not_closed", "hands_outside_roi"}
-        ):
-            print(f"DOUBLE_FIST_REJECTED reason={reason}")
+        if expected_gesture is GestureName.CLOSED_FIST:
+            if gesture_result is not None:
+                print("CLOSED_FIST_ACCEPTED")
+            elif reason in {"index_open", "fingers_not_confidently_folded"}:
+                print(f"CLOSED_FIST_REJECTED reason={reason}")
         message = (
             "TEST_GESTURES "
             f"state={state.value} "
@@ -691,11 +689,13 @@ class VanCocoApp:
             return
 
         self._last_test_gesture_snapshot = snapshot
-        if expected_gesture is GestureName.CLOSED_FIST:
-            if gesture_result is not None:
-                print("CLOSED_FIST_ACCEPTED")
-            elif reason in {"index_open", "fingers_not_confidently_folded"}:
-                print(f"CLOSED_FIST_REJECTED reason={reason}")
+        if trigger_name is CameraTriggerName.DOUBLE_CLOSED_FIST_DETECTED:
+            print("DOUBLE_FIST_ACCEPTED")
+        elif (
+            not vision_inputs.marker_detected
+            and reason in {"only_one_hand", "one_hand_not_closed", "hands_outside_roi"}
+        ):
+            print(f"DOUBLE_FIST_REJECTED reason={reason}")
         message = (
             "TEST_GESTURES "
             f"state={state.value} "
