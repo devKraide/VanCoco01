@@ -13,9 +13,12 @@ import vlc
 from config import WINDOW_NAME
 
 
+VLC_VIDEO_OUTPUT = "xcb_x11"
+
 VLC_ARGS = (
     "--no-video-title-show",
     "--avcodec-hw=none",
+    f"--vout={VLC_VIDEO_OUTPUT}",
     # ALSA avoids PipeWire/PulseAudio Bluetooth startup underruns on Ubuntu.
     "--aout=alsa",
 )
@@ -96,6 +99,7 @@ class MediaController:
         self._vlc_instance = vlc.Instance(*VLC_ARGS)
         print("VLC_HW_DECODING_DISABLED")
         print("VLC_AUDIO_BACKEND=alsa")
+        print(f"VLC_VIDEO_OUTPUT={VLC_VIDEO_OUTPUT}")
         self._media_player: Optional[vlc.MediaPlayer] = self._vlc_instance.media_player_new()
         self._window = PresentationWindow(self)
         self._window.showFullScreen()
