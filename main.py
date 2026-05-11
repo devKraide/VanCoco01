@@ -8,6 +8,7 @@ from config import (
     ENABLE_DOUBLE_CLOSED_FIST_FOR_VIDEO8,
     EXIT_KEYS,
     GestureName,
+    OPERATIONAL_OVERLAY_ENABLED,
     PERF_DIAGNOSTICS,
     ROBOT_COMMAND_COLOR_CONFIRMED,
     TEST_GESTURES_MODE,
@@ -74,6 +75,7 @@ class VanCocoApp:
                     self._media_controller.hide_preview_overlay()
                     vision_inputs = VisionInputs(gesture=None, marker_detected=False)
                     time.sleep(IDLE_LOOP_SLEEP_SECONDS)
+                self._update_operational_overlay(vision_request, vision_inputs)
 
                 self._handle_central_fallback_triggers()
 
@@ -129,6 +131,9 @@ class VanCocoApp:
 
     def _render_current_state(self) -> None:
         state = self._state_manager.state
+        if state is AppState.PLAYING_VIDEO:
+            self._media_controller.hide_operational_overlay()
+            self._media_controller.hide_preview_overlay()
         if state in {
             AppState.WARMING_UP,
             AppState.IDLE_BLACK_SCREEN,
@@ -150,6 +155,74 @@ class VanCocoApp:
             return
 
         self._last_black_screen_state = None
+
+    def _update_operational_overlay(
+        self,
+        vision_request: dict[str, object],
+        vision_inputs: VisionInputs,
+    ) -> None:
+        if not OPERATIONAL_OVERLAY_ENABLED:
+            return
+
+        if self._state_manager.state is AppState.PLAYING_VIDEO:
+            self._media_controller.hide_operational_overlay()
+            return
+
+        state_name = self._state_manager.state.value
+        expected_name = self._operational_expected_text(vision_request)
+        raw_name = self._operational_raw_text(vision_inputs)
+        reason = vision_inputs.rejection_reason or "none"
+        if raw_name != "NONE":
+            status = "aceito"
+            reason = "accepted"
+        elif vision_request["enabled"]:
+            status = "rejeitado" if vision_inputs.rejection_reason else "aguardando"
+        else:
+            status = "aguardando"
+            reason = "vision_off"
+
+        self._media_controller.show_operational_overlay(
+            state=state_name,
+            expected=expected_name,
+            raw=raw_name,
+            status=status,
+            reason=reason,
+        )
+
+    def _operational_expected_text(self, vision_request: dict[str, object]) -> str:
+        expected_gesture = vision_request["expected_gesture"]
+        if expected_gesture is not None:
+            return self._format_gesture(expected_gesture)
+
+        if vision_request["detect_marker"] and vision_request["allow_double_closed_fist"]:
+            return "MARKER_OR_DOUBLE_FIST"
+
+        if vision_request["detect_marker"]:
+            return "MARKER"
+
+        state = self._state_manager.state
+        if state in {
+            AppState.WAITING_PRESENTATION,
+            AppState.WAITING_COCOMAG_ACTION_COMPLETION,
+            AppState.WAITING_COCOVISION_ACTION_COMPLETION,
+            AppState.WAITING_COCOVISION_RETURN_COMPLETION,
+        }:
+            return "ROBOT_DONE_OR_FALLBACK"
+
+        if state is AppState.WAITING_COLOR:
+            return "COLOR_BLUE_OR_FALLBACK"
+
+        return "NONE"
+
+    @staticmethod
+    def _operational_raw_text(vision_inputs: VisionInputs) -> str:
+        if vision_inputs.marker_detected:
+            return "MARKER"
+
+        if vision_inputs.gesture is not None:
+            return vision_inputs.gesture.value
+
+        return "NONE"
 
     def _handle_warming_up_state(self) -> None:
         if not self._vision_system.poll_ready():
