@@ -35,6 +35,7 @@ from config import (
     VISION_HAND_MIN_LANDMARKS_IN_ROI_RATIO,
     VISION_HAND_MIN_PALM_RATIO,
     VISION_READY_FRAMES,
+    VISION_REJECTION_STATS,
     VISION_PERF_LOG,
     VISION_PERF_LOG_EVERY,
     VISION_PROCESSING_SCALE,
@@ -399,6 +400,8 @@ class VisionSystem:
         self._last_rejection_reason: Optional[str] = None
         self._first_hands_process_logged = False
         self._last_camera_perf_log_at = 0.0
+        self._rejection_stats: dict[str, dict[str, int]] = {}
+        self._last_rejection_stats_log_at = time.monotonic()
         self._warm_up_camera()
 
     def _open_camera(self):
@@ -486,6 +489,12 @@ class VisionSystem:
             allow_double_closed_fist,
         )
         rejection_reason = self._last_rejection_reason
+        self._record_rejection_stats(
+            expected_gesture,
+            allow_double_closed_fist,
+            gesture,
+            rejection_reason,
+        )
         if detect_marker:
             marker_started_at = time.monotonic()
             marker_detected = self._detect_marker(frame)
@@ -554,6 +563,93 @@ class VisionSystem:
             print("[Vision] ready")
 
         return self._is_ready
+
+    def _record_rejection_stats(
+        self,
+        expected_gesture: Optional[GestureName],
+        allow_double_closed_fist: bool,
+        gesture: Optional[GestureName],
+        rejection_reason: Optional[str],
+    ) -> None:
+        if not VISION_REJECTION_STATS:
+            return
+
+        expected_name = self._stats_expected_name(expected_gesture, allow_double_closed_fist)
+        stats = self._rejection_stats.setdefault(expected_name, {})
+
+        if gesture is not None:
+            stats["accepted"] = stats.get("accepted", 0) + 1
+            self._log_rejection_stats(expected_name, force=True, accepted_gesture=gesture)
+            self._rejection_stats[expected_name] = {}
+            return
+
+        reason = self._normalize_rejection_reason(rejection_reason)
+        stats[reason] = stats.get(reason, 0) + 1
+        self._log_rejection_stats(expected_name)
+
+    @staticmethod
+    def _stats_expected_name(
+        expected_gesture: Optional[GestureName],
+        allow_double_closed_fist: bool,
+    ) -> str:
+        if expected_gesture is not None:
+            return expected_gesture.value
+        if allow_double_closed_fist:
+            return GestureName.DOUBLE_CLOSED_FIST.value
+        return "NONE"
+
+    @staticmethod
+    def _normalize_rejection_reason(reason: Optional[str]) -> str:
+        if reason is None:
+            return "no_hand"
+
+        aliases = {
+            "wrong_expected_gesture": "not_expected_gesture",
+            "no_candidate_matched_expected": "not_expected_gesture",
+            "only_one_hand": "one_hand_only",
+            "one_hand_not_closed": "not_closed_fist",
+            "closed_fist_like": "not_expected_gesture",
+            "thumb_up_like": "not_expected_gesture",
+            "fingers_not_extended": "not_expected_gesture",
+            "index_open": "not_closed_fist",
+            "fingers_not_confidently_folded": "not_closed_fist",
+        }
+        return aliases.get(reason, reason)
+
+    def _log_rejection_stats(
+        self,
+        expected_name: str,
+        force: bool = False,
+        accepted_gesture: Optional[GestureName] = None,
+    ) -> None:
+        now = time.monotonic()
+        if not force and now - self._last_rejection_stats_log_at < 5.0:
+            return
+
+        stats = self._rejection_stats.get(expected_name, {})
+        if not stats:
+            return
+
+        stats_text = " ".join(
+            f"{reason}={count}"
+            for reason, count in sorted(stats.items())
+        )
+        if force and accepted_gesture is not None:
+            rejection_stats_text = " ".join(
+                f"{reason}={count}"
+                for reason, count in sorted(stats.items())
+                if reason != "accepted"
+            )
+            print(
+                "VISION_ACCEPTED "
+                f"expected={expected_name} "
+                f"raw={accepted_gesture.value} "
+                f"accepted={stats.get('accepted', 0)} "
+                f"after_rejections={{{rejection_stats_text}}}"
+            )
+        else:
+            print(f"VISION_REJECTION_STATS expected={expected_name} {stats_text}")
+            self._last_rejection_stats_log_at = now
 
     def _process_hands(self, hands_runner, rgb_frame):
         hands_started_at = time.monotonic()
@@ -783,7 +879,7 @@ class VisionSystem:
             not (0.0 <= landmarks[index].x <= 1.0 and 0.0 <= landmarks[index].y <= 1.0)
             for index in key_indices
         ):
-            return "low_quality_hand"
+            return "insufficient_landmarks"
 
         x_values = [point.x for point in landmarks]
         y_values = [point.y for point in landmarks]
@@ -800,7 +896,7 @@ class VisionSystem:
             hypot(landmarks[5].x - landmarks[17].x, landmarks[5].y - landmarks[17].y),
         )
         if palm_size < VISION_HAND_MIN_PALM_RATIO:
-            return "low_quality_hand"
+            return "palm_too_small"
 
         if not VISION_ROI_ENABLED:
             return None
