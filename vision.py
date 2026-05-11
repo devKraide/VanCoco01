@@ -29,6 +29,7 @@ from config import (
     PRAYER_WRIST_DISTANCE_RATIO,
     TEST_GESTURES_MODE,
     TRACKING_CONFIDENCE,
+    VISION_CALIBRATION_VIEW,
     VISION_GESTURE_DEBUG,
     VISION_HAND_BORDER_MARGIN_RATIO,
     VISION_HAND_QUALITY_ENABLED,
@@ -372,6 +373,7 @@ class VisionSystem:
             self._camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         hands_api = _resolve_hands_api()
         pose_api = _resolve_pose_api()
+        self._hand_connections = hands_api.HAND_CONNECTIONS
         self._hands_single = hands_api.Hands(
             static_image_mode=False,
             max_num_hands=1,
@@ -401,6 +403,7 @@ class VisionSystem:
         self._first_hands_process_logged = False
         self._last_camera_perf_log_at = 0.0
         self._rejection_stats: dict[str, dict[str, int]] = {}
+        self._calibration_stats: dict[str, dict[str, int]] = {}
         self._last_rejection_stats_log_at = time.monotonic()
         self._warm_up_camera()
 
@@ -501,6 +504,15 @@ class VisionSystem:
             marker_elapsed = time.monotonic() - marker_started_at
         else:
             marker_detected = False
+        self._show_calibration_view(
+            processing_frame,
+            hands_result,
+            pose_result,
+            expected_gesture,
+            allow_double_closed_fist,
+            gesture,
+            rejection_reason,
+        )
         self._debug_detection(
             hands_result,
             processing_frame.shape[1],
@@ -579,13 +591,22 @@ class VisionSystem:
 
         if gesture is not None:
             stats["accepted"] = stats.get("accepted", 0) + 1
+            self._record_calibration_stat(expected_name, "accepted")
             self._log_rejection_stats(expected_name, force=True, accepted_gesture=gesture)
             self._rejection_stats[expected_name] = {}
             return
 
         reason = self._normalize_rejection_reason(rejection_reason)
         stats[reason] = stats.get(reason, 0) + 1
+        self._record_calibration_stat(expected_name, reason)
         self._log_rejection_stats(expected_name)
+
+    def _record_calibration_stat(self, expected_name: str, reason: str) -> None:
+        if not VISION_CALIBRATION_VIEW:
+            return
+
+        stats = self._calibration_stats.setdefault(expected_name, {})
+        stats[reason] = stats.get(reason, 0) + 1
 
     @staticmethod
     def _stats_expected_name(
@@ -676,6 +697,171 @@ class VisionSystem:
         self._last_camera_perf_log_at = now
         print(f"PERF_CAMERA_READ_MS={read_elapsed * 1000:.1f}")
         print(f"PERF_FRAME_AGE_APPROX_MS={frame_age_approx * 1000:.1f}")
+
+    def _show_calibration_view(
+        self,
+        frame,
+        hands_result,
+        pose_result,
+        expected_gesture: Optional[GestureName],
+        allow_double_closed_fist: bool,
+        raw_gesture: Optional[GestureName],
+        rejection_reason: Optional[str],
+    ) -> None:
+        if not VISION_CALIBRATION_VIEW:
+            return
+
+        overlay = frame.copy()
+        height, width = overlay.shape[:2]
+        self._draw_calibration_roi(overlay, width, height)
+
+        hand_landmarks_list = (
+            []
+            if hands_result is None or not hands_result.multi_hand_landmarks
+            else hands_result.multi_hand_landmarks
+        )
+        for index, hand_landmarks in enumerate(hand_landmarks_list):
+            self._draw_calibration_hand(overlay, hand_landmarks, width, height, index)
+        self._draw_calibration_pose(overlay, pose_result, width, height)
+
+        expected_name = self._stats_expected_name(expected_gesture, allow_double_closed_fist)
+        reason = self._normalize_rejection_reason(rejection_reason)
+        status = "ACCEPTED" if raw_gesture is not None else "REJECTED"
+        raw_name = raw_gesture.value if raw_gesture is not None else "NONE"
+        stats_text = self._format_calibration_stats(expected_name)
+        lines = [
+            f"expected: {expected_name}",
+            f"raw: {raw_name}",
+            f"status: {status}",
+            f"reason: {reason}",
+            f"hands: {len(hand_landmarks_list)}",
+            f"stats: {stats_text}",
+        ]
+        self._draw_calibration_text(overlay, lines)
+        cv2.imshow("VanCoco Vision Calibration", overlay)
+        cv2.waitKey(1)
+
+    @staticmethod
+    def _draw_calibration_roi(frame, width: int, height: int) -> None:
+        if not VISION_ROI_ENABLED:
+            return
+
+        x_min = int(VISION_ROI_X_MIN_RATIO * width)
+        x_max = int(VISION_ROI_X_MAX_RATIO * width)
+        y_min = int(VISION_ROI_Y_MIN_RATIO * height)
+        y_max = int(VISION_ROI_Y_MAX_RATIO * height)
+        cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (0, 255, 255), 2)
+        cv2.putText(
+            frame,
+            "ROI",
+            (x_min + 8, max(20, y_min + 24)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+
+    def _draw_calibration_hand(self, frame, hand_landmarks, width: int, height: int, index: int) -> None:
+        landmarks = hand_landmarks.landmark
+        points = [
+            (int(point.x * width), int(point.y * height))
+            for point in landmarks
+        ]
+        for start_index, end_index in self._hand_connections:
+            cv2.line(frame, points[start_index], points[end_index], (0, 180, 255), 2)
+
+        for point in points:
+            cv2.circle(frame, point, 3, (0, 255, 0), -1)
+
+        center_x = int(sum(point.x for point in landmarks) / len(landmarks) * width)
+        center_y = int(sum(point.y for point in landmarks) / len(landmarks) * height)
+        palm_size = max(
+            hypot(landmarks[0].x - landmarks[9].x, landmarks[0].y - landmarks[9].y),
+            hypot(landmarks[5].x - landmarks[17].x, landmarks[5].y - landmarks[17].y),
+        )
+        quality_reason = self._hand_quality_rejection_reason(hand_landmarks)
+        label = f"hand{index + 1} palm={palm_size:.3f} quality={quality_reason or 'ok'}"
+        cv2.circle(frame, (center_x, center_y), 6, (255, 0, 255), -1)
+        cv2.putText(
+            frame,
+            label,
+            (center_x + 8, max(20, center_y - 8)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+
+    @staticmethod
+    def _draw_calibration_pose(frame, pose_result, width: int, height: int) -> None:
+        if pose_result is None or pose_result.pose_landmarks is None:
+            return
+
+        landmarks = pose_result.pose_landmarks.landmark
+        pose_points = {
+            "nose": landmarks[0],
+            "left_shoulder": landmarks[11],
+            "right_shoulder": landmarks[12],
+            "left_wrist": landmarks[15],
+            "right_wrist": landmarks[16],
+        }
+        pixel_points = {
+            name: (int(point.x * width), int(point.y * height))
+            for name, point in pose_points.items()
+        }
+        cv2.line(frame, pixel_points["left_shoulder"], pixel_points["right_shoulder"], (255, 180, 0), 2)
+        cv2.line(frame, pixel_points["left_shoulder"], pixel_points["left_wrist"], (255, 180, 0), 2)
+        cv2.line(frame, pixel_points["right_shoulder"], pixel_points["right_wrist"], (255, 180, 0), 2)
+        for name, point in pixel_points.items():
+            cv2.circle(frame, point, 5, (255, 180, 0), -1)
+            cv2.putText(
+                frame,
+                name,
+                (point[0] + 6, max(20, point[1] - 6)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+
+        wrist_center = (
+            int((pixel_points["left_wrist"][0] + pixel_points["right_wrist"][0]) / 2),
+            int((pixel_points["left_wrist"][1] + pixel_points["right_wrist"][1]) / 2),
+        )
+        cv2.circle(frame, wrist_center, 7, (0, 0, 255), -1)
+
+    @staticmethod
+    def _draw_calibration_text(frame, lines: list[str]) -> None:
+        x = 12
+        y = 24
+        line_height = 24
+        box_height = line_height * len(lines) + 12
+        cv2.rectangle(frame, (0, 0), (frame.shape[1], box_height), (0, 0, 0), -1)
+        for line in lines:
+            cv2.putText(
+                frame,
+                line,
+                (x, y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.58,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+            y += line_height
+
+    def _format_calibration_stats(self, expected_name: str) -> str:
+        stats = self._calibration_stats.get(expected_name, {})
+        if not stats:
+            return "none"
+
+        return " ".join(
+            f"{reason}={count}"
+            for reason, count in sorted(stats.items())
+        )
 
     def _detect_gesture(
         self,
@@ -1079,6 +1265,11 @@ class VisionSystem:
         self._hands_single.close()
         self._hands_double.close()
         self._pose.close()
+        if VISION_CALIBRATION_VIEW:
+            try:
+                cv2.destroyWindow("VanCoco Vision Calibration")
+            except cv2.error:
+                pass
 
     def _warm_up_camera(self) -> None:
         for _ in range(CAMERA_WARMUP_FRAMES):
