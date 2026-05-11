@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from dataclasses import dataclass
 from queue import Empty, Queue
 from threading import Lock, Timer
@@ -18,6 +19,7 @@ from config import (
     COCOVISION_COMM_MODE,
     COCOVISION_PORT,
     MOCK_ROBOTS,
+    PERF_DIAGNOSTICS,
     PRESENTATION_MODE,
     ROBOT_COMMAND_RESET,
 )
@@ -43,7 +45,7 @@ class RobotEvent:
 class RobotComm:
     def __init__(self) -> None:
         self._events: Queue[RobotEvent] = Queue()
-        self._central_fallback_triggers: Queue[None] = Queue()
+        self._central_fallback_triggers: Queue[float] = Queue()
         self._timers: list[Timer] = []
         self._lock = Lock()
         self._serial_lock = Lock()
@@ -98,13 +100,20 @@ class RobotComm:
                 return events
 
     def poll_central_fallback_triggers(self) -> int:
-        trigger_count = 0
+        return len(self.poll_central_fallback_trigger_times())
+
+    def poll_central_fallback_trigger_times(self) -> list[float]:
+        trigger_times: list[float] = []
+        now = time.monotonic() if PERF_DIAGNOSTICS else 0.0
         while True:
             try:
-                self._central_fallback_triggers.get_nowait()
-                trigger_count += 1
+                received_at = self._central_fallback_triggers.get_nowait()
             except Empty:
-                return trigger_count
+                return trigger_times
+
+            trigger_times.append(received_at)
+            if PERF_DIAGNOSTICS and received_at > 0.0:
+                print(f"PERF_ULTRA_CONSUMED delay_ms={(now - received_at) * 1000:.1f}")
 
     def set_color_events_enabled(self, enabled: bool) -> None:
         self._accept_color_events = enabled
@@ -245,7 +254,10 @@ class RobotComm:
             message = raw_line.decode("utf-8", errors="ignore").strip()
             if source == "CENTRAL_FALLBACK":
                 if message == CENTRAL_FALLBACK_TRIGGER_LINE:
-                    self._central_fallback_triggers.put(None)
+                    received_at = time.monotonic() if PERF_DIAGNOSTICS else 0.0
+                    if PERF_DIAGNOSTICS:
+                        print(f"PERF_ULTRA_RECEIVED t={received_at:.6f}")
+                    self._central_fallback_triggers.put(received_at)
                 elif message:
                     print(f"[RobotComm] {source} respondeu: {message}")
                 continue

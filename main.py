@@ -8,6 +8,7 @@ from config import (
     ENABLE_DOUBLE_CLOSED_FIST_FOR_VIDEO8,
     EXIT_KEYS,
     GestureName,
+    PERF_DIAGNOSTICS,
     ROBOT_COMMAND_COLOR_CONFIRMED,
     TEST_GESTURES_MODE,
     VIDEO_ACTIONS,
@@ -34,6 +35,10 @@ class VanCocoApp:
         self._presentation_robot_resets_sent = False
         self._last_test_gesture_snapshot = None
         self._last_black_screen_state: AppState | None = None
+        self._loop_iteration_started_at: float | None = None
+        self._loop_perf_window_started_at = time.monotonic()
+        self._loop_perf_samples: list[float] = []
+        self._gesture_first_raw_at: dict[GestureName, float] = {}
 
     def run(self) -> None:
         try:
@@ -41,6 +46,7 @@ class VanCocoApp:
             self._media_controller.show_black_screen()
             self._last_black_screen_state = self._state_manager.state
             while not self._media_controller.should_close():
+                self._begin_loop_iteration()
                 # Main orchestration loop: refresh UI, sample inputs, then dispatch by AppState.
                 self._media_controller.update_ui()
                 self._render_current_state()
@@ -373,9 +379,15 @@ class VanCocoApp:
         self._media_controller.start_mock_video(transition.mock_video_duration)
 
     def _handle_central_fallback_triggers(self) -> None:
+        if PERF_DIAGNOSTICS:
+            trigger_times = self._robot_comm.poll_central_fallback_trigger_times()
+            for received_at in trigger_times:
+                self._consume_central_fallback_trigger(received_at)
+            return
+
         trigger_count = self._robot_comm.poll_central_fallback_triggers()
         for _ in range(trigger_count):
-            self._consume_central_fallback_trigger()
+            self._consume_central_fallback_trigger(None)
 
     def _send_robot_resets_before_idle(self) -> None:
         if self._presentation_robot_resets_sent:
@@ -384,7 +396,7 @@ class VanCocoApp:
         self._robot_comm.reset_presentation_robots()
         self._presentation_robot_resets_sent = True
 
-    def _consume_central_fallback_trigger(self) -> None:
+    def _consume_central_fallback_trigger(self, received_at: float | None = None) -> None:
         state = self._state_manager.state
         state_name = state.value
 
@@ -397,6 +409,7 @@ class VanCocoApp:
             AppState.WAITING_VIDEO9_TRIGGER,
         }:
             if self._apply_fallback_gesture(expected_gesture):
+                self._log_ultra_action_dispatched(received_at)
                 print(
                     f"CENTRAL_FALLBACK_ACCEPTED: {expected_gesture.value} in {state_name}"
                 )
@@ -406,16 +419,19 @@ class VanCocoApp:
             robot_name = self._story_engine.current_pending_presentation_robot()
             if robot_name is not None:
                 self._apply_fallback_robot_event(RobotEvent(robot=robot_name, status="DONE"))
+                self._log_ultra_action_dispatched(received_at)
                 print(f"CENTRAL_FALLBACK_ACCEPTED: {robot_name}_DONE in {state_name}")
                 return
 
         if state is AppState.WAITING_COCOMAG_ACTION_COMPLETION:
             self._apply_fallback_robot_event(RobotEvent(robot="COCOMAG", status="DONE"))
+            self._log_ultra_action_dispatched(received_at)
             print("CENTRAL_FALLBACK_ACCEPTED: COCOMAG_DONE in waiting_cocomag_action_completion")
             return
 
         if state is AppState.WAITING_COCOVISION_ACTION_COMPLETION:
             self._apply_fallback_robot_event(RobotEvent(robot="COCOVISION", status="DONE"))
+            self._log_ultra_action_dispatched(received_at)
             print(
                 "CENTRAL_FALLBACK_ACCEPTED: COCOVISION_DONE in waiting_cocovision_action_completion"
             )
@@ -425,11 +441,13 @@ class VanCocoApp:
             self._apply_fallback_robot_event(RobotEvent(robot="COCOVISION", status="COLOR_BLUE"))
             if self._state_manager.state is AppState.PLAYING_VIDEO:
                 self._send_cocovision_color_confirmed()
+            self._log_ultra_action_dispatched(received_at)
             print("CENTRAL_FALLBACK_ACCEPTED: COLOR_BLUE in waiting_color")
             return
 
         if state is AppState.WAITING_COCOVISION_RETURN_COMPLETION:
             self._apply_fallback_robot_event(RobotEvent(robot="COCOVISION", status="DONE"))
+            self._log_ultra_action_dispatched(received_at)
             print(
                 "CENTRAL_FALLBACK_ACCEPTED: COCOVISION_DONE in waiting_cocovision_return_completion"
             )
@@ -437,6 +455,7 @@ class VanCocoApp:
 
         if state is AppState.WAITING_VIDEO8_TRIGGER:
             self._apply_fallback_video8_trigger(CameraTriggerName.MAGNIFIER_MARKER_DETECTED)
+            self._log_ultra_action_dispatched(received_at)
             print("CENTRAL_FALLBACK_ACCEPTED: VIDEO8_TRIGGER in waiting_video8_trigger")
             return
 
@@ -582,9 +601,12 @@ class VanCocoApp:
 
     def _read_trigger_source(self, key_code: int, vision_inputs):
         if not TEST_GESTURES_MODE:
-            return self._gesture_mapper.map_gesture(vision_inputs.gesture)
+            gesture_result = self._gesture_mapper.map_gesture(vision_inputs.gesture)
+            self._record_gesture_perf(vision_inputs.gesture, gesture_result)
+            return gesture_result
 
         gesture_result = self._gesture_mapper.map_gesture(vision_inputs.gesture)
+        self._record_gesture_perf(vision_inputs.gesture, gesture_result)
         self._log_test_gesture_result(
             raw_gesture=vision_inputs.gesture,
             gesture_result=gesture_result,
@@ -600,6 +622,7 @@ class VanCocoApp:
 
         elif ENABLE_DOUBLE_CLOSED_FIST_FOR_VIDEO8:
             gesture_result = self._gesture_mapper.map_gesture(vision_inputs.gesture)
+            self._record_gesture_perf(vision_inputs.gesture, gesture_result)
             if (
                 gesture_result is not None
                 and gesture_result.gesture is GestureName.DOUBLE_CLOSED_FIST
@@ -731,6 +754,69 @@ class VanCocoApp:
     @staticmethod
     def _format_gesture(gesture: GestureName | None) -> str:
         return gesture.value if gesture is not None else "NONE"
+
+    def _begin_loop_iteration(self) -> None:
+        if not PERF_DIAGNOSTICS:
+            return
+
+        now = time.monotonic()
+        previous_started_at = self._loop_iteration_started_at
+        self._loop_iteration_started_at = now
+        if previous_started_at is None:
+            self._loop_perf_window_started_at = now
+            return
+
+        elapsed_ms = (now - previous_started_at) * 1000
+        if elapsed_ms > 100.0:
+            print(f"PERF_LOOP_SLOW_MS={elapsed_ms:.1f}")
+
+        self._loop_perf_samples.append(elapsed_ms)
+        if now - self._loop_perf_window_started_at < 2.0:
+            return
+
+        samples = self._loop_perf_samples
+        if samples:
+            sorted_samples = sorted(samples)
+            p95_index = int((len(sorted_samples) - 1) * 0.95)
+            avg_ms = sum(samples) / len(samples)
+            print(f"PERF_LOOP_AVG_MS={avg_ms:.1f} p95_ms={sorted_samples[p95_index]:.1f}")
+
+        self._loop_perf_samples = []
+        self._loop_perf_window_started_at = now
+
+    def _record_gesture_perf(
+        self,
+        raw_gesture: GestureName | None,
+        gesture_result: GestureResult | None,
+    ) -> None:
+        if not PERF_DIAGNOSTICS:
+            return
+
+        now = time.monotonic()
+        if raw_gesture is not None and raw_gesture not in self._gesture_first_raw_at:
+            self._gesture_first_raw_at[raw_gesture] = now
+            print(f"PERF_GESTURE_RAW_DETECTED gesture={raw_gesture.value} t={now:.6f}")
+
+        if gesture_result is None:
+            return
+
+        raw_detected_at = self._gesture_first_raw_at.pop(gesture_result.gesture, now)
+        latency_ms = (now - raw_detected_at) * 1000
+        print(
+            "PERF_GESTURE_ACCEPTED "
+            f"gesture={gesture_result.gesture.value} "
+            f"latency_ms={latency_ms:.1f}"
+        )
+
+    @staticmethod
+    def _log_ultra_action_dispatched(received_at: float | None) -> None:
+        if not PERF_DIAGNOSTICS or received_at is None or received_at <= 0.0:
+            return
+
+        print(
+            "PERF_ULTRA_ACTION_DISPATCHED "
+            f"delay_ms={(time.monotonic() - received_at) * 1000:.1f}"
+        )
 
     def _build_vision_request(self) -> dict[str, object]:
         state = self._state_manager.state
