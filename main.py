@@ -132,7 +132,7 @@ class VanCocoApp:
 
     def _render_current_state(self) -> None:
         state = self._state_manager.state
-        if state is AppState.PLAYING_VIDEO:
+        if self._is_playing_video():
             self._media_controller.hide_operational_overlay()
             self._media_controller.hide_preview_overlay()
         if state in {
@@ -165,13 +165,62 @@ class VanCocoApp:
         if not OPERATIONAL_OVERLAY_ENABLED:
             return
 
-        if self._state_manager.state is AppState.PLAYING_VIDEO:
+        if self._is_playing_video():
             self._media_controller.hide_operational_overlay()
             return
 
         state_name = self._state_manager.state.value
         narrative_text = self._operational_state_text()
-        expected_name = self._operational_expected_text(vision_request)
+
+        lines = [
+            f"Estado: {narrative_text}",
+            f"Sistema: {state_name}",
+        ]
+        if self._is_waiting_visual_input():
+            lines.extend(self._operational_visual_lines(vision_request, vision_inputs))
+        elif self._is_waiting_robot_or_system():
+            self._media_controller.hide_preview_overlay()
+            lines.extend(self._operational_system_lines())
+        else:
+            self._media_controller.hide_preview_overlay()
+            lines.append("Status: aguardando")
+
+        lines.extend(
+            [
+                f"Ultimo evento: {self._last_operational_event}",
+                f"Ultimo comando: {self._robot_comm.last_command()}",
+                f"Ultimo retorno: {self._robot_comm.last_return()}",
+            ]
+        )
+        self._media_controller.show_operational_overlay(lines)
+
+    def _is_waiting_visual_input(self) -> bool:
+        return self._state_manager.state in {
+            AppState.IDLE_BLACK_SCREEN,
+            AppState.WAITING_COCOMAG_ACTION,
+            AppState.WAITING_VIDEO5_TRIGGER,
+            AppState.WAITING_VIDEO6_TRIGGER,
+            AppState.WAITING_VIDEO8_TRIGGER,
+            AppState.WAITING_VIDEO9_TRIGGER,
+        }
+
+    def _is_waiting_robot_or_system(self) -> bool:
+        return self._state_manager.state in {
+            AppState.WAITING_PRESENTATION,
+            AppState.WAITING_COCOMAG_ACTION_COMPLETION,
+            AppState.WAITING_COCOVISION_ACTION_COMPLETION,
+            AppState.WAITING_COLOR,
+            AppState.WAITING_COCOVISION_RETURN_COMPLETION,
+        }
+
+    def _is_playing_video(self) -> bool:
+        return self._state_manager.state is AppState.PLAYING_VIDEO
+
+    def _operational_visual_lines(
+        self,
+        vision_request: dict[str, object],
+        vision_inputs: VisionInputs,
+    ) -> list[str]:
         raw_name = self._operational_raw_text(vision_inputs)
         reason = self._operational_reason_text(vision_inputs.rejection_reason)
         if raw_name != "NONE":
@@ -183,23 +232,18 @@ class VanCocoApp:
             status = "aguardando"
             reason = "visao inativa"
 
-        lines = (
-            [
-                f"Estado: {narrative_text}",
-                f"Sistema: {state_name}",
-                f"Gesto esperado: {expected_name}",
-                f"Visao: {status}",
-                f"Raw: {raw_name}",
-                f"Motivo: {reason}",
-            ]
+        return [
+            f"Gesto esperado: {self._operational_expected_text(vision_request)}",
+            f"Visao: {status}",
+            f"Raw: {raw_name}",
+            f"Motivo: {reason}",
+        ]
+
+    def _operational_system_lines(self) -> list[str]:
+        return (
+            [f"Aguardando: {self._operational_expected_text(self._build_vision_request())}"]
             + self._operational_robot_lines()
-            + [
-                f"Ultimo evento: {self._last_operational_event}",
-                f"Ultimo comando: {self._robot_comm.last_command()}",
-                f"Ultimo retorno: {self._robot_comm.last_return()}",
-            ]
         )
-        self._media_controller.show_operational_overlay(lines)
 
     def _operational_state_text(self) -> str:
         state = self._state_manager.state
