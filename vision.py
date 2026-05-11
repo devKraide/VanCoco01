@@ -89,6 +89,9 @@ class FingerState:
     middle_reach: float
     ring_reach: float
     pinky_reach: float
+    index_middle_spread: float
+    middle_ring_spread: float
+    ring_pinky_spread: float
     curled_fingers: int
 
 
@@ -211,6 +214,9 @@ class GestureClassifier:
         middle_reach = distance(12, 9) / palm_size
         ring_reach = distance(16, 13) / palm_size
         pinky_reach = distance(20, 17) / palm_size
+        index_middle_spread = distance(8, 12) / palm_size
+        middle_ring_spread = distance(12, 16) / palm_size
+        ring_pinky_spread = distance(16, 20) / palm_size
 
         thumb_open = self._is_thumb_extended(thumb_tip_x, thumb_ip_x, wrist_x)
         thumb_up = all(
@@ -233,6 +239,9 @@ class GestureClassifier:
             middle_reach=middle_reach,
             ring_reach=ring_reach,
             pinky_reach=pinky_reach,
+            index_middle_spread=index_middle_spread,
+            middle_ring_spread=middle_ring_spread,
+            ring_pinky_spread=ring_pinky_spread,
             curled_fingers=sum(
                 (
                     index_reach < 0.75 and index_tip_y > index_mcp_y,
@@ -260,39 +269,57 @@ class GestureClassifier:
 
     @staticmethod
     def _hand_open_rejection_reason(finger_state: FingerState) -> tuple[Optional[str], int]:
-        extended_fingers = sum(
-            (
-                finger_state.index_reach >= 0.95,
-                finger_state.middle_reach >= 0.95,
-                finger_state.ring_reach >= 0.9,
-                finger_state.pinky_reach >= 0.85,
-            )
+        extended_flags = (
+            finger_state.index_reach >= 0.82,
+            finger_state.middle_reach >= 0.85,
+            finger_state.ring_reach >= 0.78,
+            finger_state.pinky_reach >= 0.72,
         )
+        strong_flags = (
+            finger_state.index_reach >= 0.95,
+            finger_state.middle_reach >= 0.95,
+            finger_state.ring_reach >= 0.9,
+            finger_state.pinky_reach >= 0.85,
+        )
+        spread_flags = (
+            finger_state.index_middle_spread >= 0.16,
+            finger_state.middle_ring_spread >= 0.13,
+            finger_state.ring_pinky_spread >= 0.1,
+        )
+        extended_fingers = sum(extended_flags)
+        strong_fingers = sum(strong_flags)
+        spread_count = sum(spread_flags)
 
         if not finger_state.is_complete:
             return "low_quality_hand", extended_fingers
 
-        if finger_state.thumb_up:
+        if finger_state.thumb_up and extended_fingers < 3:
             return "thumb_up_like", extended_fingers
 
-        if finger_state.curled_fingers >= 3:
+        if finger_state.curled_fingers >= 3 and extended_fingers <= 1:
             return "closed_fist_like", extended_fingers
 
         if extended_fingers < 3:
             return "fingers_not_extended", extended_fingers
 
+        if strong_fingers == 0:
+            return "weak_extension", extended_fingers
+
+        if extended_fingers == 3 and strong_fingers == 1 and spread_count == 0:
+            return "insufficient_spread", extended_fingers
+
         return None, extended_fingers
 
     @staticmethod
     def _log_hand_open_result(extended_fingers: int, reason: Optional[str]) -> None:
-        if not TEST_GESTURES_MODE:
+        if not (TEST_GESTURES_MODE or VISION_CALIBRATION_VIEW):
             return
 
-        print(f"HAND_OPEN_REACH fingers={extended_fingers}/4")
+        print(f"HAND_OPEN_DEBUG fingers_extended={extended_fingers}/4")
         if reason is None:
             print("HAND_OPEN_ACCEPTED")
         else:
-            print(f"HAND_OPEN_REJECTED reason={reason}")
+            print(f"HAND_OPEN_DEBUG reason={reason}")
 
     @staticmethod
     def _is_point(finger_state: FingerState) -> bool:
