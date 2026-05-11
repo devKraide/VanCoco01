@@ -46,7 +46,7 @@ PREVIEW_WIDTH = 360
 PREVIEW_HEIGHT = 200
 PREVIEW_MARGIN = 14
 OPERATIONAL_OVERLAY_WIDTH = 420
-OPERATIONAL_OVERLAY_HEIGHT = 170
+OPERATIONAL_OVERLAY_HEIGHT = 360
 
 
 class PresentationWindow(QWidget):
@@ -229,25 +229,12 @@ class MediaController:
 
     def show_operational_overlay(
         self,
-        state: str,
-        expected: str,
-        raw: str,
-        status: str,
-        reason: str,
+        lines: list[str],
     ) -> None:
         if not OPERATIONAL_OVERLAY_ENABLED:
             return
 
-        text = "\n".join(
-            (
-                f"STATE    {state}",
-                f"EXPECTED {expected}",
-                f"RAW      {raw}",
-                f"STATUS   {status}",
-                f"REASON   {reason}",
-            )
-        )
-        self._window.operational_overlay.setText(text)
+        self._window.operational_overlay.setText("\n".join(lines))
         self._window.operational_overlay.show()
         self._window.operational_overlay.raise_()
 
