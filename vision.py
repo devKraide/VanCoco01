@@ -35,6 +35,7 @@ from config import (
     VISION_HAND_QUALITY_ENABLED,
     VISION_HAND_MIN_LANDMARKS_IN_ROI_RATIO,
     VISION_HAND_MIN_PALM_RATIO,
+    VISION_PREVIEW_OVERLAY,
     VISION_READY_FRAMES,
     VISION_REJECTION_STATS,
     VISION_PERF_LOG,
@@ -431,6 +432,7 @@ class VisionSystem:
         self._last_camera_perf_log_at = 0.0
         self._rejection_stats: dict[str, dict[str, int]] = {}
         self._calibration_stats: dict[str, dict[str, int]] = {}
+        self._latest_preview_frame = None
         self._last_rejection_stats_log_at = time.monotonic()
         self._warm_up_camera()
 
@@ -568,6 +570,14 @@ class VisionSystem:
             prioritize_prayer_hands=prioritize_prayer_hands,
         ).gesture
 
+    def consume_preview_frame(self):
+        if not VISION_PREVIEW_OVERLAY:
+            return None
+
+        frame = self._latest_preview_frame
+        self._latest_preview_frame = None
+        return frame
+
     def poll_ready(self) -> bool:
         if self._is_ready:
             return True
@@ -629,7 +639,7 @@ class VisionSystem:
         self._log_rejection_stats(expected_name)
 
     def _record_calibration_stat(self, expected_name: str, reason: str) -> None:
-        if not VISION_CALIBRATION_VIEW:
+        if not (VISION_CALIBRATION_VIEW or VISION_PREVIEW_OVERLAY):
             return
 
         stats = self._calibration_stats.setdefault(expected_name, {})
@@ -765,6 +775,10 @@ class VisionSystem:
             f"stats: {stats_text}",
         ]
         self._draw_calibration_text(overlay, lines)
+        if VISION_PREVIEW_OVERLAY:
+            self._latest_preview_frame = overlay
+            return
+
         cv2.imshow("VanCoco Vision Calibration", overlay)
         cv2.waitKey(1)
 
@@ -1292,7 +1306,7 @@ class VisionSystem:
         self._hands_single.close()
         self._hands_double.close()
         self._pose.close()
-        if VISION_CALIBRATION_VIEW:
+        if VISION_CALIBRATION_VIEW and not VISION_PREVIEW_OVERLAY:
             try:
                 cv2.destroyWindow("VanCoco Vision Calibration")
             except cv2.error:
