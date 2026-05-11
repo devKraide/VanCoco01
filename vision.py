@@ -21,6 +21,7 @@ from config import (
     DETECTION_CONFIDENCE,
     DOUBLE_CLOSED_FIST_ROI_Y_MAX_RATIO,
     GestureName,
+    PERF_DIAGNOSTICS,
     POSE_VISIBILITY_THRESHOLD,
     PRAYER_CENTER_OFFSET_RATIO,
     PRAYER_CHEST_HEIGHT_MAX_RATIO,
@@ -357,6 +358,9 @@ class GestureClassifier:
 
 class VisionSystem:
     def __init__(self) -> None:
+        self._vision_init_started_at = time.monotonic() if PERF_DIAGNOSTICS else 0.0
+        if PERF_DIAGNOSTICS:
+            print(f"PERF_MEDIAPIPE_INIT_START t={self._vision_init_started_at:.6f}")
         self._camera = self._open_camera()
         self._camera.set(cv2.CAP_PROP_BUFFERSIZE, CAMERA_BUFFER_SIZE)
         self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_FRAME_WIDTH)
@@ -393,6 +397,8 @@ class VisionSystem:
         self._ready_frames = 0
         self._is_ready = False
         self._last_rejection_reason: Optional[str] = None
+        self._first_hands_process_logged = False
+        self._last_camera_perf_log_at = 0.0
         self._warm_up_camera()
 
     def _open_camera(self):
@@ -419,9 +425,10 @@ class VisionSystem:
         started_at = time.monotonic()
         capture_started_at = started_at
         success, frame = self._camera.read()
+        capture_finished_at = time.monotonic()
         if not success:
             return VisionInputs(gesture=None, marker_detected=False)
-        capture_elapsed = time.monotonic() - capture_started_at
+        capture_elapsed = capture_finished_at - capture_started_at
 
         rgb_frame = None
         processing_frame = frame
@@ -457,11 +464,14 @@ class VisionSystem:
 
         if should_run_hands:
             hands_runner = self._hands_double
-            hands_started_at = time.monotonic()
-            hands_result = hands_runner.process(rgb_frame)
-            hands_elapsed = time.monotonic() - hands_started_at
+            frame_age_approx = time.monotonic() - capture_finished_at
+            self._log_camera_perf(capture_elapsed, frame_age_approx)
+            hands_result, hands_elapsed = self._process_hands(hands_runner, rgb_frame)
 
         if should_run_pose:
+            if not should_run_hands:
+                frame_age_approx = time.monotonic() - capture_finished_at
+                self._log_camera_perf(capture_elapsed, frame_age_approx)
             pose_started_at = time.monotonic()
             pose_result = self._pose.process(rgb_frame)
             pose_elapsed = time.monotonic() - pose_started_at
@@ -517,7 +527,9 @@ class VisionSystem:
         if not self._camera.isOpened():
             return False
 
+        capture_started_at = time.monotonic()
         success, frame = self._camera.read()
+        capture_finished_at = time.monotonic()
         if not success:
             return False
 
@@ -533,13 +545,41 @@ class VisionSystem:
 
         rgb_frame = cv2.cvtColor(processing_frame, cv2.COLOR_BGR2RGB)
         rgb_frame.flags.writeable = False
-        self._hands_single.process(rgb_frame)
+        frame_age_approx = time.monotonic() - capture_finished_at
+        self._log_camera_perf(capture_finished_at - capture_started_at, frame_age_approx)
+        self._process_hands(self._hands_single, rgb_frame)
         self._ready_frames += 1
         if self._ready_frames >= VISION_READY_FRAMES:
             self._is_ready = True
             print("[Vision] ready")
 
         return self._is_ready
+
+    def _process_hands(self, hands_runner, rgb_frame):
+        hands_started_at = time.monotonic()
+        is_first_process = PERF_DIAGNOSTICS and not self._first_hands_process_logged
+        if is_first_process:
+            print(f"PERF_MEDIAPIPE_FIRST_PROCESS_START t={hands_started_at:.6f}")
+        result = hands_runner.process(rgb_frame)
+        hands_finished_at = time.monotonic()
+        hands_elapsed = hands_finished_at - hands_started_at
+        if is_first_process:
+            self._first_hands_process_logged = True
+            print(f"PERF_MEDIAPIPE_FIRST_PROCESS_END t={hands_finished_at:.6f}")
+            print(f"PERF_MEDIAPIPE_COLD_START_MS={hands_elapsed * 1000:.1f}")
+        return result, hands_elapsed
+
+    def _log_camera_perf(self, read_elapsed: float, frame_age_approx: float) -> None:
+        if not PERF_DIAGNOSTICS:
+            return
+
+        now = time.monotonic()
+        if self._last_camera_perf_log_at and now - self._last_camera_perf_log_at < 2.0:
+            return
+
+        self._last_camera_perf_log_at = now
+        print(f"PERF_CAMERA_READ_MS={read_elapsed * 1000:.1f}")
+        print(f"PERF_FRAME_AGE_APPROX_MS={frame_age_approx * 1000:.1f}")
 
     def _detect_gesture(
         self,
