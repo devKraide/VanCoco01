@@ -129,7 +129,11 @@ class GestureClassifier:
             return GestureName.THUMB_UP if candidates[GestureName.THUMB_UP] else None
 
         if expected_gesture is GestureName.POINT:
-            return GestureName.POINT if candidates[GestureName.POINT] else None
+            reason, index_extended, other_fingers_extended = self._point_rejection_reason(
+                finger_state
+            )
+            self._log_point_result(index_extended, other_fingers_extended, reason)
+            return GestureName.POINT if reason is None else None
 
         if expected_gesture is GestureName.CLOSED_FIST:
             return (
@@ -324,17 +328,63 @@ class GestureClassifier:
 
     @staticmethod
     def _is_point(finger_state: FingerState) -> bool:
-        return all(
-            (
-                finger_state.is_complete,
-                finger_state.index_open,
-                not finger_state.middle_open,
-                not finger_state.ring_open,
-                not finger_state.pinky_open,
-                not finger_state.thumb_up,
-                finger_state.curled_fingers >= 3,
-            )
+        reason, _index_extended, _other_fingers_extended = (
+            GestureClassifier._point_rejection_reason(finger_state)
         )
+        return reason is None
+
+    @staticmethod
+    def _point_rejection_reason(finger_state: FingerState) -> tuple[Optional[str], bool, int]:
+        index_extended = finger_state.index_reach >= 0.88
+        index_strong = finger_state.index_reach >= 0.98
+        other_extended_flags = (
+            finger_state.middle_reach >= 0.82,
+            finger_state.ring_reach >= 0.78,
+            finger_state.pinky_reach >= 0.72,
+        )
+        other_weak_flags = (
+            finger_state.middle_reach >= 0.7,
+            finger_state.ring_reach >= 0.68,
+            finger_state.pinky_reach >= 0.64,
+        )
+        other_fingers_extended = sum(other_extended_flags)
+        other_fingers_not_folded = sum(other_weak_flags)
+
+        if not finger_state.is_complete:
+            return "low_quality_hand", index_extended, other_fingers_extended
+
+        if not index_extended:
+            return "index_not_extended", index_extended, other_fingers_extended
+
+        if not index_strong and other_fingers_not_folded > 0:
+            return "weak_index_extension", index_extended, other_fingers_extended
+
+        if other_fingers_extended >= 2:
+            return "open_hand_like", index_extended, other_fingers_extended
+
+        if finger_state.middle_reach >= 0.82:
+            return "v_sign_like", index_extended, other_fingers_extended
+
+        if other_fingers_not_folded >= 2:
+            return "other_fingers_not_folded", index_extended, other_fingers_extended
+
+        return None, index_extended, other_fingers_extended
+
+    @staticmethod
+    def _log_point_result(
+        index_extended: bool,
+        other_fingers_extended: int,
+        reason: Optional[str],
+    ) -> None:
+        if not (TEST_GESTURES_MODE or VISION_CALIBRATION_VIEW):
+            return
+
+        print(f"POINT_DEBUG index_extended={str(index_extended).lower()}")
+        print(f"POINT_DEBUG other_fingers_extended={other_fingers_extended}")
+        if reason is None:
+            print("POINT_ACCEPTED")
+        else:
+            print(f"POINT_REJECTED reason={reason}")
 
     @staticmethod
     def _is_v_sign(finger_state: FingerState) -> bool:
