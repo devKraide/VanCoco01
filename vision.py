@@ -29,12 +29,15 @@ from config import (
     PRAYER_WRIST_DISTANCE_RATIO,
     TEST_GESTURES_MODE,
     TRACKING_CONFIDENCE,
+    VISION_CALIBRATION_VIEW,
     VISION_GESTURE_DEBUG,
     VISION_HAND_BORDER_MARGIN_RATIO,
     VISION_HAND_QUALITY_ENABLED,
     VISION_HAND_MIN_LANDMARKS_IN_ROI_RATIO,
     VISION_HAND_MIN_PALM_RATIO,
+    VISION_PREVIEW_OVERLAY,
     VISION_READY_FRAMES,
+    VISION_REJECTION_STATS,
     VISION_PERF_LOG,
     VISION_PERF_LOG_EVERY,
     VISION_PROCESSING_SCALE,
@@ -87,6 +90,9 @@ class FingerState:
     middle_reach: float
     ring_reach: float
     pinky_reach: float
+    index_middle_spread: float
+    middle_ring_spread: float
+    ring_pinky_spread: float
     curled_fingers: int
 
 
@@ -209,6 +215,9 @@ class GestureClassifier:
         middle_reach = distance(12, 9) / palm_size
         ring_reach = distance(16, 13) / palm_size
         pinky_reach = distance(20, 17) / palm_size
+        index_middle_spread = distance(8, 12) / palm_size
+        middle_ring_spread = distance(12, 16) / palm_size
+        ring_pinky_spread = distance(16, 20) / palm_size
 
         thumb_open = self._is_thumb_extended(thumb_tip_x, thumb_ip_x, wrist_x)
         thumb_up = all(
@@ -231,6 +240,9 @@ class GestureClassifier:
             middle_reach=middle_reach,
             ring_reach=ring_reach,
             pinky_reach=pinky_reach,
+            index_middle_spread=index_middle_spread,
+            middle_ring_spread=middle_ring_spread,
+            ring_pinky_spread=ring_pinky_spread,
             curled_fingers=sum(
                 (
                     index_reach < 0.75 and index_tip_y > index_mcp_y,
@@ -258,39 +270,57 @@ class GestureClassifier:
 
     @staticmethod
     def _hand_open_rejection_reason(finger_state: FingerState) -> tuple[Optional[str], int]:
-        extended_fingers = sum(
-            (
-                finger_state.index_reach >= 0.95,
-                finger_state.middle_reach >= 0.95,
-                finger_state.ring_reach >= 0.9,
-                finger_state.pinky_reach >= 0.85,
-            )
+        extended_flags = (
+            finger_state.index_reach >= 0.82,
+            finger_state.middle_reach >= 0.85,
+            finger_state.ring_reach >= 0.78,
+            finger_state.pinky_reach >= 0.72,
         )
+        strong_flags = (
+            finger_state.index_reach >= 0.95,
+            finger_state.middle_reach >= 0.95,
+            finger_state.ring_reach >= 0.9,
+            finger_state.pinky_reach >= 0.85,
+        )
+        spread_flags = (
+            finger_state.index_middle_spread >= 0.16,
+            finger_state.middle_ring_spread >= 0.13,
+            finger_state.ring_pinky_spread >= 0.1,
+        )
+        extended_fingers = sum(extended_flags)
+        strong_fingers = sum(strong_flags)
+        spread_count = sum(spread_flags)
 
         if not finger_state.is_complete:
             return "low_quality_hand", extended_fingers
 
-        if finger_state.thumb_up:
+        if finger_state.thumb_up and extended_fingers < 3:
             return "thumb_up_like", extended_fingers
 
-        if finger_state.curled_fingers >= 3:
+        if finger_state.curled_fingers >= 3 and extended_fingers <= 1:
             return "closed_fist_like", extended_fingers
 
         if extended_fingers < 3:
             return "fingers_not_extended", extended_fingers
 
+        if strong_fingers == 0:
+            return "weak_extension", extended_fingers
+
+        if extended_fingers == 3 and strong_fingers == 1 and spread_count == 0:
+            return "insufficient_spread", extended_fingers
+
         return None, extended_fingers
 
     @staticmethod
     def _log_hand_open_result(extended_fingers: int, reason: Optional[str]) -> None:
-        if not TEST_GESTURES_MODE:
+        if not (TEST_GESTURES_MODE or VISION_CALIBRATION_VIEW):
             return
 
-        print(f"HAND_OPEN_REACH fingers={extended_fingers}/4")
+        print(f"HAND_OPEN_DEBUG fingers_extended={extended_fingers}/4")
         if reason is None:
             print("HAND_OPEN_ACCEPTED")
         else:
-            print(f"HAND_OPEN_REJECTED reason={reason}")
+            print(f"HAND_OPEN_DEBUG reason={reason}")
 
     @staticmethod
     def _is_point(finger_state: FingerState) -> bool:
@@ -371,6 +401,7 @@ class VisionSystem:
             self._camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         hands_api = _resolve_hands_api()
         pose_api = _resolve_pose_api()
+        self._hand_connections = hands_api.HAND_CONNECTIONS
         self._hands_single = hands_api.Hands(
             static_image_mode=False,
             max_num_hands=1,
@@ -399,6 +430,10 @@ class VisionSystem:
         self._last_rejection_reason: Optional[str] = None
         self._first_hands_process_logged = False
         self._last_camera_perf_log_at = 0.0
+        self._rejection_stats: dict[str, dict[str, int]] = {}
+        self._calibration_stats: dict[str, dict[str, int]] = {}
+        self._latest_preview_frame = None
+        self._last_rejection_stats_log_at = time.monotonic()
         self._warm_up_camera()
 
     def _open_camera(self):
@@ -486,12 +521,27 @@ class VisionSystem:
             allow_double_closed_fist,
         )
         rejection_reason = self._last_rejection_reason
+        self._record_rejection_stats(
+            expected_gesture,
+            allow_double_closed_fist,
+            gesture,
+            rejection_reason,
+        )
         if detect_marker:
             marker_started_at = time.monotonic()
             marker_detected = self._detect_marker(frame)
             marker_elapsed = time.monotonic() - marker_started_at
         else:
             marker_detected = False
+        self._show_calibration_view(
+            processing_frame,
+            hands_result,
+            pose_result,
+            expected_gesture,
+            allow_double_closed_fist,
+            gesture,
+            rejection_reason,
+        )
         self._debug_detection(
             hands_result,
             processing_frame.shape[1],
@@ -519,6 +569,14 @@ class VisionSystem:
             expected_gesture=expected_gesture,
             prioritize_prayer_hands=prioritize_prayer_hands,
         ).gesture
+
+    def consume_preview_frame(self):
+        if not VISION_PREVIEW_OVERLAY:
+            return None
+
+        frame = self._latest_preview_frame
+        self._latest_preview_frame = None
+        return frame
 
     def poll_ready(self) -> bool:
         if self._is_ready:
@@ -555,6 +613,102 @@ class VisionSystem:
 
         return self._is_ready
 
+    def _record_rejection_stats(
+        self,
+        expected_gesture: Optional[GestureName],
+        allow_double_closed_fist: bool,
+        gesture: Optional[GestureName],
+        rejection_reason: Optional[str],
+    ) -> None:
+        if not VISION_REJECTION_STATS:
+            return
+
+        expected_name = self._stats_expected_name(expected_gesture, allow_double_closed_fist)
+        stats = self._rejection_stats.setdefault(expected_name, {})
+
+        if gesture is not None:
+            stats["accepted"] = stats.get("accepted", 0) + 1
+            self._record_calibration_stat(expected_name, "accepted")
+            self._log_rejection_stats(expected_name, force=True, accepted_gesture=gesture)
+            self._rejection_stats[expected_name] = {}
+            return
+
+        reason = self._normalize_rejection_reason(rejection_reason)
+        stats[reason] = stats.get(reason, 0) + 1
+        self._record_calibration_stat(expected_name, reason)
+        self._log_rejection_stats(expected_name)
+
+    def _record_calibration_stat(self, expected_name: str, reason: str) -> None:
+        if not (VISION_CALIBRATION_VIEW or VISION_PREVIEW_OVERLAY):
+            return
+
+        stats = self._calibration_stats.setdefault(expected_name, {})
+        stats[reason] = stats.get(reason, 0) + 1
+
+    @staticmethod
+    def _stats_expected_name(
+        expected_gesture: Optional[GestureName],
+        allow_double_closed_fist: bool,
+    ) -> str:
+        if expected_gesture is not None:
+            return expected_gesture.value
+        if allow_double_closed_fist:
+            return GestureName.DOUBLE_CLOSED_FIST.value
+        return "NONE"
+
+    @staticmethod
+    def _normalize_rejection_reason(reason: Optional[str]) -> str:
+        if reason is None:
+            return "no_hand"
+
+        aliases = {
+            "wrong_expected_gesture": "not_expected_gesture",
+            "no_candidate_matched_expected": "not_expected_gesture",
+            "only_one_hand": "one_hand_only",
+            "one_hand_not_closed": "not_closed_fist",
+            "closed_fist_like": "not_expected_gesture",
+            "thumb_up_like": "not_expected_gesture",
+            "fingers_not_extended": "not_expected_gesture",
+            "index_open": "not_closed_fist",
+            "fingers_not_confidently_folded": "not_closed_fist",
+        }
+        return aliases.get(reason, reason)
+
+    def _log_rejection_stats(
+        self,
+        expected_name: str,
+        force: bool = False,
+        accepted_gesture: Optional[GestureName] = None,
+    ) -> None:
+        now = time.monotonic()
+        if not force and now - self._last_rejection_stats_log_at < 5.0:
+            return
+
+        stats = self._rejection_stats.get(expected_name, {})
+        if not stats:
+            return
+
+        stats_text = " ".join(
+            f"{reason}={count}"
+            for reason, count in sorted(stats.items())
+        )
+        if force and accepted_gesture is not None:
+            rejection_stats_text = " ".join(
+                f"{reason}={count}"
+                for reason, count in sorted(stats.items())
+                if reason != "accepted"
+            )
+            print(
+                "VISION_ACCEPTED "
+                f"expected={expected_name} "
+                f"raw={accepted_gesture.value} "
+                f"accepted={stats.get('accepted', 0)} "
+                f"after_rejections={{{rejection_stats_text}}}"
+            )
+        else:
+            print(f"VISION_REJECTION_STATS expected={expected_name} {stats_text}")
+            self._last_rejection_stats_log_at = now
+
     def _process_hands(self, hands_runner, rgb_frame):
         hands_started_at = time.monotonic()
         is_first_process = PERF_DIAGNOSTICS and not self._first_hands_process_logged
@@ -580,6 +734,175 @@ class VisionSystem:
         self._last_camera_perf_log_at = now
         print(f"PERF_CAMERA_READ_MS={read_elapsed * 1000:.1f}")
         print(f"PERF_FRAME_AGE_APPROX_MS={frame_age_approx * 1000:.1f}")
+
+    def _show_calibration_view(
+        self,
+        frame,
+        hands_result,
+        pose_result,
+        expected_gesture: Optional[GestureName],
+        allow_double_closed_fist: bool,
+        raw_gesture: Optional[GestureName],
+        rejection_reason: Optional[str],
+    ) -> None:
+        if not VISION_CALIBRATION_VIEW:
+            return
+
+        overlay = frame.copy()
+        height, width = overlay.shape[:2]
+        self._draw_calibration_roi(overlay, width, height)
+
+        hand_landmarks_list = (
+            []
+            if hands_result is None or not hands_result.multi_hand_landmarks
+            else hands_result.multi_hand_landmarks
+        )
+        for index, hand_landmarks in enumerate(hand_landmarks_list):
+            self._draw_calibration_hand(overlay, hand_landmarks, width, height, index)
+        self._draw_calibration_pose(overlay, pose_result, width, height)
+
+        expected_name = self._stats_expected_name(expected_gesture, allow_double_closed_fist)
+        reason = self._normalize_rejection_reason(rejection_reason)
+        status = "ACCEPTED" if raw_gesture is not None else "REJECTED"
+        raw_name = raw_gesture.value if raw_gesture is not None else "NONE"
+        stats_text = self._format_calibration_stats(expected_name)
+        lines = [
+            f"expected: {expected_name}",
+            f"raw: {raw_name}",
+            f"status: {status}",
+            f"reason: {reason}",
+            f"hands: {len(hand_landmarks_list)}",
+            f"stats: {stats_text}",
+        ]
+        self._draw_calibration_text(overlay, lines)
+        if VISION_PREVIEW_OVERLAY:
+            self._latest_preview_frame = overlay
+            return
+
+        cv2.imshow("VanCoco Vision Calibration", overlay)
+        cv2.waitKey(1)
+
+    @staticmethod
+    def _draw_calibration_roi(frame, width: int, height: int) -> None:
+        if not VISION_ROI_ENABLED:
+            return
+
+        x_min = int(VISION_ROI_X_MIN_RATIO * width)
+        x_max = int(VISION_ROI_X_MAX_RATIO * width)
+        y_min = int(VISION_ROI_Y_MIN_RATIO * height)
+        y_max = int(VISION_ROI_Y_MAX_RATIO * height)
+        cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (0, 255, 255), 2)
+        cv2.putText(
+            frame,
+            "ROI",
+            (x_min + 8, max(20, y_min + 24)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+
+    def _draw_calibration_hand(self, frame, hand_landmarks, width: int, height: int, index: int) -> None:
+        landmarks = hand_landmarks.landmark
+        points = [
+            (int(point.x * width), int(point.y * height))
+            for point in landmarks
+        ]
+        for start_index, end_index in self._hand_connections:
+            cv2.line(frame, points[start_index], points[end_index], (0, 180, 255), 2)
+
+        for point in points:
+            cv2.circle(frame, point, 3, (0, 255, 0), -1)
+
+        center_x = int(sum(point.x for point in landmarks) / len(landmarks) * width)
+        center_y = int(sum(point.y for point in landmarks) / len(landmarks) * height)
+        palm_size = max(
+            hypot(landmarks[0].x - landmarks[9].x, landmarks[0].y - landmarks[9].y),
+            hypot(landmarks[5].x - landmarks[17].x, landmarks[5].y - landmarks[17].y),
+        )
+        quality_reason = self._hand_quality_rejection_reason(hand_landmarks)
+        label = f"hand{index + 1} palm={palm_size:.3f} quality={quality_reason or 'ok'}"
+        cv2.circle(frame, (center_x, center_y), 6, (255, 0, 255), -1)
+        cv2.putText(
+            frame,
+            label,
+            (center_x + 8, max(20, center_y - 8)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+
+    @staticmethod
+    def _draw_calibration_pose(frame, pose_result, width: int, height: int) -> None:
+        if pose_result is None or pose_result.pose_landmarks is None:
+            return
+
+        landmarks = pose_result.pose_landmarks.landmark
+        pose_points = {
+            "nose": landmarks[0],
+            "left_shoulder": landmarks[11],
+            "right_shoulder": landmarks[12],
+            "left_wrist": landmarks[15],
+            "right_wrist": landmarks[16],
+        }
+        pixel_points = {
+            name: (int(point.x * width), int(point.y * height))
+            for name, point in pose_points.items()
+        }
+        cv2.line(frame, pixel_points["left_shoulder"], pixel_points["right_shoulder"], (255, 180, 0), 2)
+        cv2.line(frame, pixel_points["left_shoulder"], pixel_points["left_wrist"], (255, 180, 0), 2)
+        cv2.line(frame, pixel_points["right_shoulder"], pixel_points["right_wrist"], (255, 180, 0), 2)
+        for name, point in pixel_points.items():
+            cv2.circle(frame, point, 5, (255, 180, 0), -1)
+            cv2.putText(
+                frame,
+                name,
+                (point[0] + 6, max(20, point[1] - 6)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+
+        wrist_center = (
+            int((pixel_points["left_wrist"][0] + pixel_points["right_wrist"][0]) / 2),
+            int((pixel_points["left_wrist"][1] + pixel_points["right_wrist"][1]) / 2),
+        )
+        cv2.circle(frame, wrist_center, 7, (0, 0, 255), -1)
+
+    @staticmethod
+    def _draw_calibration_text(frame, lines: list[str]) -> None:
+        x = 12
+        y = 24
+        line_height = 24
+        box_height = line_height * len(lines) + 12
+        cv2.rectangle(frame, (0, 0), (frame.shape[1], box_height), (0, 0, 0), -1)
+        for line in lines:
+            cv2.putText(
+                frame,
+                line,
+                (x, y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.58,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+            y += line_height
+
+    def _format_calibration_stats(self, expected_name: str) -> str:
+        stats = self._calibration_stats.get(expected_name, {})
+        if not stats:
+            return "none"
+
+        return " ".join(
+            f"{reason}={count}"
+            for reason, count in sorted(stats.items())
+        )
 
     def _detect_gesture(
         self,
@@ -783,7 +1106,7 @@ class VisionSystem:
             not (0.0 <= landmarks[index].x <= 1.0 and 0.0 <= landmarks[index].y <= 1.0)
             for index in key_indices
         ):
-            return "low_quality_hand"
+            return "insufficient_landmarks"
 
         x_values = [point.x for point in landmarks]
         y_values = [point.y for point in landmarks]
@@ -800,7 +1123,7 @@ class VisionSystem:
             hypot(landmarks[5].x - landmarks[17].x, landmarks[5].y - landmarks[17].y),
         )
         if palm_size < VISION_HAND_MIN_PALM_RATIO:
-            return "low_quality_hand"
+            return "palm_too_small"
 
         if not VISION_ROI_ENABLED:
             return None
@@ -983,6 +1306,11 @@ class VisionSystem:
         self._hands_single.close()
         self._hands_double.close()
         self._pose.close()
+        if VISION_CALIBRATION_VIEW and not VISION_PREVIEW_OVERLAY:
+            try:
+                cv2.destroyWindow("VanCoco Vision Calibration")
+            except cv2.error:
+                pass
 
     def _warm_up_camera(self) -> None:
         for _ in range(CAMERA_WARMUP_FRAMES):

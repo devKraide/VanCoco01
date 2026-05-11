@@ -8,9 +8,10 @@ from pathlib import Path
 from typing import Optional
 
 import PySide6
+import cv2
 import vlc
 
-from config import WINDOW_NAME
+from config import VISION_PREVIEW_OVERLAY, WINDOW_NAME
 
 
 VLC_ARGS = (
@@ -37,8 +38,13 @@ elif platform.system() == "Linux":
     os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtGui import QColor, QImage, QPalette, QPixmap
+from PySide6.QtWidgets import QApplication, QLabel, QWidget
+
+
+PREVIEW_WIDTH = 360
+PREVIEW_HEIGHT = 200
+PREVIEW_MARGIN = 14
 
 
 class PresentationWindow(QWidget):
@@ -46,11 +52,16 @@ class PresentationWindow(QWidget):
         super().__init__()
         self._controller = controller
         self._video_surface = QWidget(self)
+        self._preview_overlay = QLabel(self)
         self._configure_window()
 
     @property
     def video_surface(self) -> QWidget:
         return self._video_surface
+
+    @property
+    def preview_overlay(self) -> QLabel:
+        return self._preview_overlay
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key_Escape:
@@ -67,6 +78,7 @@ class PresentationWindow(QWidget):
 
     def resizeEvent(self, event) -> None:
         self._video_surface.setGeometry(self.rect())
+        self._position_preview_overlay()
         super().resizeEvent(event)
 
     def _configure_window(self) -> None:
@@ -83,6 +95,27 @@ class PresentationWindow(QWidget):
         self._video_surface.setAttribute(Qt.WA_NativeWindow, True)
         self._video_surface.setAttribute(Qt.WA_DontCreateNativeAncestors, True)
         self._video_surface.show()
+
+        self._preview_overlay.setGeometry(
+            PREVIEW_MARGIN,
+            PREVIEW_MARGIN,
+            PREVIEW_WIDTH,
+            PREVIEW_HEIGHT,
+        )
+        self._preview_overlay.setStyleSheet(
+            "background-color: black; border: 2px solid rgba(255, 255, 255, 180);"
+        )
+        self._preview_overlay.setAlignment(Qt.AlignCenter)
+        self._preview_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._preview_overlay.hide()
+
+    def _position_preview_overlay(self) -> None:
+        self._preview_overlay.setGeometry(
+            PREVIEW_MARGIN,
+            PREVIEW_MARGIN,
+            PREVIEW_WIDTH,
+            PREVIEW_HEIGHT,
+        )
 
 
 class MediaController:
@@ -109,12 +142,14 @@ class MediaController:
     def show_black_screen(self) -> None:
         self._window.video_surface.show()
         self._window.video_surface.setGeometry(0, 0, 1, 1)
+        self._window.preview_overlay.raise_()
         self._window.showFullScreen()
         self._window.raise_()
         self._window.activateWindow()
         self._app.processEvents()
 
     def start_video(self, video_path: Path) -> None:
+        self.hide_preview_overlay()
         self.stop_video()
         if not video_path.exists():
             raise FileNotFoundError(f"Nao foi possivel abrir o video: {video_path}")
@@ -129,6 +164,35 @@ class MediaController:
         self._app.processEvents()
         print("VLC_PLAY_START")
         self._media_player.play()
+
+    def show_preview_frame(self, frame) -> None:
+        if not VISION_PREVIEW_OVERLAY or frame is None:
+            return
+
+        preview = cv2.resize(
+            frame,
+            (PREVIEW_WIDTH, PREVIEW_HEIGHT),
+            interpolation=cv2.INTER_AREA,
+        )
+        rgb_preview = cv2.cvtColor(preview, cv2.COLOR_BGR2RGB)
+        height, width, channels = rgb_preview.shape
+        bytes_per_line = channels * width
+        image = QImage(
+            rgb_preview.data,
+            width,
+            height,
+            bytes_per_line,
+            QImage.Format_RGB888,
+        )
+        self._window.preview_overlay.setPixmap(QPixmap.fromImage(image.copy()))
+        self._window.preview_overlay.show()
+        self._window.preview_overlay.raise_()
+
+    def hide_preview_overlay(self) -> None:
+        if not VISION_PREVIEW_OVERLAY:
+            return
+
+        self._window.preview_overlay.hide()
 
     def start_mock_video(self, duration_seconds: float) -> None:
         self.stop_video()

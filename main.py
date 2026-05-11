@@ -67,7 +67,11 @@ class VanCocoApp:
                         prioritize_prayer_hands=vision_request["prioritize_prayer_hands"],
                         allow_double_closed_fist=vision_request["allow_double_closed_fist"],
                     )
+                    self._media_controller.show_preview_frame(
+                        self._vision_system.consume_preview_frame()
+                    )
                 else:
+                    self._media_controller.hide_preview_overlay()
                     vision_inputs = VisionInputs(gesture=None, marker_detected=False)
                     time.sleep(IDLE_LOOP_SLEEP_SECONDS)
 
