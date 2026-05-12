@@ -40,7 +40,6 @@ Consome:
 - `GestureName`
 - `CameraTriggerName`
 - `EXIT_KEYS`
-- `KEY_ACTIONS`
 - `ENABLE_DOUBLE_CLOSED_FIST_FOR_VIDEO8`
 
 Esses elementos orientam o loop principal e o roteamento dos gatilhos.
@@ -192,14 +191,6 @@ Controlam o desfecho final sem depender de gesto diferente.
 `PRAYER_HANDS` apenas dispara a etapa final; o video final real vem de:
 - `success -> video9a`
 - `failure -> video9b`
-
-### `KEY_ACTIONS`
-
-Atalhos de teclado para teste local.
-
-Hoje:
-- `1 -> HAND_OPEN`
-- `2 -> POINT`
 
 ### `EXIT_KEYS`
 

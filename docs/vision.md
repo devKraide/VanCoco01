@@ -238,14 +238,8 @@ Recebe o parametro:
 
 O metodo atual foi otimizado para performance:
 - se o estado nao precisa de pose, `Pose` nao roda
-- se o estado nao precisa de duas maos, usa apenas o detector leve
+- se o estado nao precisa de marker, ArUco nao roda
 - se o estado so precisa de um gesto especifico, o classificador testa apenas esse gesto
-
-#### `detect_gesture()`
-
-Atalho para quem so quer o gesto sem olhar marker.
-
-Hoje ele apenas delega para `read_inputs()`.
 
 #### `_detect_gesture()`
 

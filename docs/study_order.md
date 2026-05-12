@@ -9,7 +9,7 @@ Comecaria pelo `README.md` para entender:
 - o fluxo narrativo completo
 - os robos envolvidos
 - os videos esperados
-- como o projeto roda no Linux e no macOS
+- como o projeto roda no Ubuntu alvo da apresentacao
 - como USB e RFCOMM entram na operacao
 
 Sem isso, o resto do codigo fica sem contexto.
