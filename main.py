@@ -132,7 +132,7 @@ class VanCocoApp:
 
     def _render_current_state(self) -> None:
         state = self._state_manager.state
-        if self._is_playing_video():
+        if self._overlay_mode() == "hidden":
             self._media_controller.hide_operational_overlay()
             self._media_controller.hide_preview_overlay()
         if state in {
@@ -165,8 +165,10 @@ class VanCocoApp:
         if not OPERATIONAL_OVERLAY_ENABLED:
             return
 
-        if self._is_playing_video():
+        overlay_mode = self._overlay_mode()
+        if overlay_mode == "hidden":
             self._media_controller.hide_operational_overlay()
+            self._media_controller.hide_preview_overlay()
             return
 
         state_name = self._state_manager.state.value
@@ -176,9 +178,9 @@ class VanCocoApp:
             f"Estado: {narrative_text}",
             f"Sistema: {state_name}",
         ]
-        if self._is_waiting_visual_input():
+        if overlay_mode == "camera_and_logs":
             lines.extend(self._operational_visual_lines(vision_request, vision_inputs))
-        elif self._is_waiting_robot_or_system():
+        elif overlay_mode == "logs_only":
             self._media_controller.hide_preview_overlay()
             lines.extend(self._operational_system_lines())
         else:
@@ -194,27 +196,31 @@ class VanCocoApp:
         )
         self._media_controller.show_operational_overlay(lines)
 
-    def _is_waiting_visual_input(self) -> bool:
-        return self._state_manager.state in {
+    def _overlay_mode(self) -> str:
+        state = self._state_manager.state
+        if state is AppState.PLAYING_VIDEO:
+            return "hidden"
+
+        if state in {
             AppState.IDLE_BLACK_SCREEN,
             AppState.WAITING_COCOMAG_ACTION,
             AppState.WAITING_VIDEO5_TRIGGER,
             AppState.WAITING_VIDEO6_TRIGGER,
             AppState.WAITING_VIDEO8_TRIGGER,
             AppState.WAITING_VIDEO9_TRIGGER,
-        }
+        }:
+            return "camera_and_logs"
 
-    def _is_waiting_robot_or_system(self) -> bool:
-        return self._state_manager.state in {
+        if state in {
             AppState.WAITING_PRESENTATION,
             AppState.WAITING_COCOMAG_ACTION_COMPLETION,
             AppState.WAITING_COCOVISION_ACTION_COMPLETION,
             AppState.WAITING_COLOR,
             AppState.WAITING_COCOVISION_RETURN_COMPLETION,
-        }
+        }:
+            return "logs_only"
 
-    def _is_playing_video(self) -> bool:
-        return self._state_manager.state is AppState.PLAYING_VIDEO
+        return "logs_only"
 
     def _operational_visual_lines(
         self,
