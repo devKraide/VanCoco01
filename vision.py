@@ -20,6 +20,8 @@ from config import (
     CAMERA_USE_MJPG,
     DETECTION_CONFIDENCE,
     DOUBLE_CLOSED_FIST_ROI_Y_MAX_RATIO,
+    DOUBLE_CLOSED_FIST_MIN_CENTER_DISTANCE,
+    DOUBLE_CLOSED_FIST_STABLE_FRAMES,
     GestureName,
     PERF_DIAGNOSTICS,
     POSE_VISIBILITY_THRESHOLD,
@@ -483,6 +485,7 @@ class VisionSystem:
         self._rejection_stats: dict[str, dict[str, int]] = {}
         self._calibration_stats: dict[str, dict[str, int]] = {}
         self._latest_preview_frame = None
+        self._double_closed_fist_stable_frames = 0
         self._last_rejection_stats_log_at = time.monotonic()
         self._warm_up_camera()
 
@@ -966,6 +969,7 @@ class VisionSystem:
     ) -> Optional[GestureName]:
         self._last_rejection_reason = None
         if prioritize_prayer_hands and self._detect_prayer_hands(pose_result):
+            self._reset_double_closed_fist_stability()
             if self._pose_hands_center_in_roi(pose_result):
                 return GestureName.PRAYER_HANDS
             self._last_rejection_reason = "outside_roi"
@@ -974,6 +978,8 @@ class VisionSystem:
             sorted_hands = self._hands_by_size(hands_result.multi_hand_landmarks)
             if allow_double_closed_fist and expected_gesture is None:
                 if len(sorted_hands) < 2:
+                    self._reset_double_closed_fist_stability()
+                    self._log_double_closed_fist_debug(len(sorted_hands), 0, False)
                     self._last_rejection_reason = "only_one_hand"
                     return None
 
@@ -983,11 +989,19 @@ class VisionSystem:
                     if self._double_fist_hand_rejection_reason(hand_landmarks) is None
                 ]
                 if len(valid_hands) < 2:
+                    self._reset_double_closed_fist_stability()
+                    self._log_double_closed_fist_debug(len(sorted_hands), len(valid_hands), False)
                     self._last_rejection_reason = "hands_outside_roi"
                     return None
 
                 first_hand = valid_hands[0]
                 second_hand = valid_hands[1]
+                if not self._double_fist_hands_are_separate(first_hand, second_hand):
+                    self._reset_double_closed_fist_stability()
+                    self._log_double_closed_fist_debug(len(sorted_hands), len(valid_hands), False)
+                    self._last_rejection_reason = "ghost_hand"
+                    return None
+
                 first_state, first_candidates = self._classifier.describe_hand(
                     first_hand,
                     image_width,
@@ -1004,11 +1018,28 @@ class VisionSystem:
                     and first_state.curled_fingers >= 4
                     and second_state.curled_fingers >= 4
                 ):
-                    return GestureName.DOUBLE_CLOSED_FIST
+                    self._double_closed_fist_stable_frames += 1
+                    simultaneous = (
+                        self._double_closed_fist_stable_frames
+                        >= DOUBLE_CLOSED_FIST_STABLE_FRAMES
+                    )
+                    self._log_double_closed_fist_debug(len(sorted_hands), 2, simultaneous)
+                    if simultaneous:
+                        self._log_double_closed_fist_accepted()
+                        return GestureName.DOUBLE_CLOSED_FIST
 
+                    self._last_rejection_reason = "double_fist_stabilizing"
+                    return None
+
+                self._reset_double_closed_fist_stability()
+                fists_detected = int(first_candidates[GestureName.CLOSED_FIST]) + int(
+                    second_candidates[GestureName.CLOSED_FIST]
+                )
+                self._log_double_closed_fist_debug(len(sorted_hands), fists_detected, False)
                 self._last_rejection_reason = "one_hand_not_closed"
                 return None
 
+            self._reset_double_closed_fist_stability()
             if expected_gesture in {
                 GestureName.HAND_OPEN,
                 GestureName.POINT,
@@ -1061,10 +1092,12 @@ class VisionSystem:
                 self._last_rejection_reason = "wrong_expected_gesture"
 
         if self._detect_prayer_hands(pose_result):
+            self._reset_double_closed_fist_stability()
             if self._pose_hands_center_in_roi(pose_result):
                 return GestureName.PRAYER_HANDS
             self._last_rejection_reason = "outside_roi"
 
+        self._reset_double_closed_fist_stability()
         return None
 
     def _detect_expected_simple_gesture(
@@ -1144,6 +1177,45 @@ class VisionSystem:
             return "hands_outside_roi"
 
         return None
+
+    @staticmethod
+    def _hand_center(hand_landmarks) -> tuple[float, float]:
+        landmarks = hand_landmarks.landmark
+        return (
+            sum(point.x for point in landmarks) / len(landmarks),
+            sum(point.y for point in landmarks) / len(landmarks),
+        )
+
+    def _double_fist_hands_are_separate(self, first_hand, second_hand) -> bool:
+        first_x, first_y = self._hand_center(first_hand)
+        second_x, second_y = self._hand_center(second_hand)
+        return (
+            hypot(first_x - second_x, first_y - second_y)
+            >= DOUBLE_CLOSED_FIST_MIN_CENTER_DISTANCE
+        )
+
+    def _reset_double_closed_fist_stability(self) -> None:
+        self._double_closed_fist_stable_frames = 0
+
+    @staticmethod
+    def _log_double_closed_fist_debug(
+        hands_detected: int,
+        fists_detected: int,
+        simultaneous: bool,
+    ) -> None:
+        if not (TEST_GESTURES_MODE or VISION_CALIBRATION_VIEW):
+            return
+
+        print(f"DOUBLE_DEBUG hands_detected={hands_detected}")
+        print(f"DOUBLE_DEBUG fists_detected={fists_detected}")
+        print(f"DOUBLE_DEBUG simultaneous={str(simultaneous).lower()}")
+
+    @staticmethod
+    def _log_double_closed_fist_accepted() -> None:
+        if not (TEST_GESTURES_MODE or VISION_CALIBRATION_VIEW):
+            return
+
+        print("DOUBLE_ACCEPTED")
 
     @staticmethod
     def _hand_quality_rejection_reason(hand_landmarks) -> Optional[str]:
