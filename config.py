@@ -85,12 +85,6 @@ FINAL_VIDEO_PATHS = {
 }
 
 
-KEY_ACTIONS = {
-    ord("1"): GestureName.HAND_OPEN,
-    ord("2"): GestureName.POINT,
-}
-
-
 EXIT_KEYS = {ord("q"), 27}
 CAMERA_INDEX = 0
 CAMERA_WARMUP_FRAMES = 5
