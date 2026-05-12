@@ -52,6 +52,8 @@ class RobotComm:
         self._reserved_ports: set[str] = set()
         self._connections: dict[str, object] = {"COCOMAG": None, "COCOVISION": None}
         self._central_connection = None
+        self._last_command = "nenhum"
+        self._last_return = "nenhum"
         self._serial_threads: list[threading.Thread] = []
         self._serial_running = False
         self._accept_color_events = True
@@ -118,6 +120,19 @@ class RobotComm:
     def set_color_events_enabled(self, enabled: bool) -> None:
         self._accept_color_events = enabled
 
+    def connection_statuses(self) -> dict[str, str]:
+        return {
+            "COCOMAG": "conectado" if self._connections["COCOMAG"] is not None else "ausente",
+            "COCOVISION": "conectado" if self._connections["COCOVISION"] is not None else "ausente",
+            "CENTRAL_FALLBACK": "conectado" if self._central_connection is not None else "ausente",
+        }
+
+    def last_command(self) -> str:
+        return self._last_command
+
+    def last_return(self) -> str:
+        return self._last_return
+
     def clear_color_events(self) -> None:
         retained_events: list[RobotEvent] = []
         while True:
@@ -148,6 +163,7 @@ class RobotComm:
         self._disconnect_robot("COCOVISION")
 
     def _emit_event(self, event: RobotEvent) -> None:
+        self._last_return = event.code
         self._events.put(event)
 
     def _emit_mock_done(self, robot: str) -> None:
@@ -211,6 +227,7 @@ class RobotComm:
         print(f"[RobotComm] {robot} conectado via {mode} em {port}")
 
     def _send_robot_command(self, robot: str, command: str) -> bool:
+        self._last_command = f"{robot}:{command}"
         connection = self._connections[robot]
         if connection is None:
             self._connect_robot(robot)

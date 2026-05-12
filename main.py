@@ -8,6 +8,7 @@ from config import (
     ENABLE_DOUBLE_CLOSED_FIST_FOR_VIDEO8,
     EXIT_KEYS,
     GestureName,
+    OPERATIONAL_OVERLAY_ENABLED,
     PERF_DIAGNOSTICS,
     ROBOT_COMMAND_COLOR_CONFIRMED,
     TEST_GESTURES_MODE,
@@ -39,6 +40,7 @@ class VanCocoApp:
         self._loop_perf_window_started_at = time.monotonic()
         self._loop_perf_samples: list[float] = []
         self._gesture_first_raw_at: dict[GestureName, float] = {}
+        self._last_operational_event = "nenhum"
 
     def run(self) -> None:
         try:
@@ -74,6 +76,7 @@ class VanCocoApp:
                     self._media_controller.hide_preview_overlay()
                     vision_inputs = VisionInputs(gesture=None, marker_detected=False)
                     time.sleep(IDLE_LOOP_SLEEP_SECONDS)
+                self._update_operational_overlay(vision_request, vision_inputs)
 
                 self._handle_central_fallback_triggers()
 
@@ -129,6 +132,9 @@ class VanCocoApp:
 
     def _render_current_state(self) -> None:
         state = self._state_manager.state
+        if self._overlay_mode() == "hidden":
+            self._media_controller.hide_operational_overlay()
+            self._media_controller.hide_preview_overlay()
         if state in {
             AppState.WARMING_UP,
             AppState.IDLE_BLACK_SCREEN,
@@ -150,6 +156,245 @@ class VanCocoApp:
             return
 
         self._last_black_screen_state = None
+
+    def _update_operational_overlay(
+        self,
+        vision_request: dict[str, object],
+        vision_inputs: VisionInputs,
+    ) -> None:
+        if not OPERATIONAL_OVERLAY_ENABLED:
+            return
+
+        overlay_mode = self._overlay_mode()
+        if overlay_mode == "hidden":
+            self._media_controller.hide_operational_overlay()
+            self._media_controller.hide_preview_overlay()
+            return
+
+        state_name = self._state_manager.state.value
+        narrative_text = self._operational_state_text()
+
+        lines = [
+            f"Estado: {narrative_text}",
+            f"Sistema: {state_name}",
+        ]
+        if overlay_mode == "camera_and_logs":
+            lines.extend(self._operational_visual_lines(vision_request, vision_inputs))
+        elif overlay_mode == "logs_only":
+            self._media_controller.hide_preview_overlay()
+            lines.extend(self._operational_system_lines())
+        else:
+            self._media_controller.hide_preview_overlay()
+            lines.append("Status: aguardando")
+
+        lines.extend(
+            [
+                f"Ultimo evento: {self._last_operational_event}",
+                f"Ultimo comando: {self._robot_comm.last_command()}",
+                f"Ultimo retorno: {self._robot_comm.last_return()}",
+            ]
+        )
+        self._media_controller.show_operational_overlay(lines)
+
+    def _overlay_mode(self) -> str:
+        state = self._state_manager.state
+        if state is AppState.PLAYING_VIDEO:
+            return "hidden"
+
+        if state in {
+            AppState.IDLE_BLACK_SCREEN,
+            AppState.WAITING_COCOMAG_ACTION,
+            AppState.WAITING_VIDEO5_TRIGGER,
+            AppState.WAITING_VIDEO6_TRIGGER,
+            AppState.WAITING_VIDEO8_TRIGGER,
+            AppState.WAITING_VIDEO9_TRIGGER,
+        }:
+            return "camera_and_logs"
+
+        if state in {
+            AppState.WAITING_PRESENTATION,
+            AppState.WAITING_COCOMAG_ACTION_COMPLETION,
+            AppState.WAITING_COCOVISION_ACTION_COMPLETION,
+            AppState.WAITING_COLOR,
+            AppState.WAITING_COCOVISION_RETURN_COMPLETION,
+        }:
+            return "logs_only"
+
+        return "logs_only"
+
+    def _operational_visual_lines(
+        self,
+        vision_request: dict[str, object],
+        vision_inputs: VisionInputs,
+    ) -> list[str]:
+        raw_name = self._operational_raw_text(vision_inputs)
+        reason = self._operational_reason_text(vision_inputs.rejection_reason)
+        if raw_name != "NONE":
+            status = "gesto reconhecido"
+            reason = "aceito"
+        elif vision_request["enabled"]:
+            status = self._operational_vision_status(vision_inputs.rejection_reason)
+        else:
+            status = "aguardando"
+            reason = "visao inativa"
+
+        return [
+            f"Gesto esperado: {self._operational_expected_text(vision_request)}",
+            f"Visao: {status}",
+            f"Raw: {raw_name}",
+            f"Motivo: {reason}",
+        ]
+
+    def _operational_system_lines(self) -> list[str]:
+        return (
+            [f"Aguardando: {self._operational_expected_text(self._build_vision_request())}"]
+            + self._operational_robot_lines()
+        )
+
+    def _operational_state_text(self) -> str:
+        state = self._state_manager.state
+        if state is AppState.WARMING_UP:
+            return "Preparando sistema"
+        if state is AppState.IDLE_BLACK_SCREEN:
+            return "Aguardando gesto inicial"
+        if state is AppState.WAITING_COCOMAG_ACTION:
+            return "Aguardando sinal de vitoria"
+        if state is AppState.WAITING_VIDEO5_TRIGGER:
+            return "Aguardando polegar"
+        if state is AppState.WAITING_VIDEO6_TRIGGER:
+            return "Aguardando punho fechado"
+        if state is AppState.WAITING_VIDEO8_TRIGGER:
+            return "Aguardando punhos fechados"
+        if state is AppState.WAITING_VIDEO9_TRIGGER:
+            return "Aguardando oracao"
+        if state is AppState.WAITING_PRESENTATION:
+            return "Aguardando CocoMag e CocoVision"
+        if state is AppState.WAITING_COCOMAG_ACTION_COMPLETION:
+            return "Aguardando CocoMag"
+        if state is AppState.WAITING_COCOVISION_ACTION_COMPLETION:
+            return "Aguardando CocoVision"
+        if state is AppState.WAITING_COLOR:
+            return "Aguardando cor azul"
+        if state is AppState.WAITING_COCOVISION_RETURN_COMPLETION:
+            return "Aguardando retorno"
+        return "Aguardando"
+
+    def _operational_expected_text(self, vision_request: dict[str, object]) -> str:
+        expected_gesture = vision_request["expected_gesture"]
+        if expected_gesture is not None:
+            return self._friendly_gesture_name(expected_gesture)
+
+        if vision_request["detect_marker"] and vision_request["allow_double_closed_fist"]:
+            return "marcador ou dois punhos"
+
+        if vision_request["detect_marker"]:
+            return "marcador"
+
+        state = self._state_manager.state
+        if state in {
+            AppState.WAITING_PRESENTATION,
+            AppState.WAITING_COCOMAG_ACTION_COMPLETION,
+            AppState.WAITING_COCOVISION_ACTION_COMPLETION,
+            AppState.WAITING_COCOVISION_RETURN_COMPLETION,
+        }:
+            return "retorno do robo ou fallback"
+
+        if state is AppState.WAITING_COLOR:
+            return "cor azul ou fallback"
+
+        return "nenhum"
+
+    def _operational_robot_lines(self) -> list[str]:
+        statuses = self._robot_comm.connection_statuses()
+        lines = [
+            "Robos:",
+            f"  CocoMag: {statuses['COCOMAG']}",
+            f"  CocoVision: {statuses['COCOVISION']}",
+            f"  Fallback central: {statuses['CENTRAL_FALLBACK']}",
+        ]
+
+        waiting_lines = self._operational_waiting_robot_lines()
+        if waiting_lines:
+            lines.extend(["Aguardando robos:", *waiting_lines])
+
+        return lines
+
+    def _operational_waiting_robot_lines(self) -> list[str]:
+        state = self._state_manager.state
+        if state is AppState.WAITING_PRESENTATION:
+            pending = self._story_engine.current_pending_presentation_robots()
+            return [
+                f"  CocoMag: {'aguardando' if 'COCOMAG' in pending else 'OK'}",
+                f"  CocoVision: {'aguardando' if 'COCOVISION' in pending else 'OK'}",
+            ]
+
+        if state is AppState.WAITING_COCOMAG_ACTION_COMPLETION:
+            return ["  CocoMag: aguardando"]
+
+        if state in {
+            AppState.WAITING_COCOVISION_ACTION_COMPLETION,
+            AppState.WAITING_COCOVISION_RETURN_COMPLETION,
+        }:
+            return ["  CocoVision: aguardando"]
+
+        return []
+
+    @staticmethod
+    def _operational_vision_status(reason: str | None) -> str:
+        if reason is None or reason == "no_hand":
+            return "aguardando"
+
+        if reason in {"outside_roi", "hands_outside_roi"}:
+            return "fora da area"
+
+        if reason in {"low_quality_hand", "palm_too_small", "insufficient_landmarks"}:
+            return "ajuste a mao"
+
+        return "ajuste a mao"
+
+    @staticmethod
+    def _operational_reason_text(reason: str | None) -> str:
+        if reason is None:
+            return "nenhum"
+
+        reasons = {
+            "no_hand": "sem mao detectada",
+            "outside_roi": "fora da area",
+            "hands_outside_roi": "maos fora da area",
+            "low_quality_hand": "mao parcial/baixa qualidade",
+            "palm_too_small": "mao muito distante",
+            "not_expected_gesture": "gesto diferente",
+            "wrong_expected_gesture": "gesto diferente",
+            "index_not_extended": "indicador nao estendido",
+            "fingers_not_extended": "dedos pouco estendidos",
+            "requires_two_closed_fists": "precisa de dois punhos",
+            "only_one_hand": "apenas uma mao",
+            "one_hand_not_closed": "uma mao nao fechada",
+        }
+        return reasons.get(reason, reason)
+
+    @staticmethod
+    def _friendly_gesture_name(gesture: GestureName) -> str:
+        names = {
+            GestureName.HAND_OPEN: "mao aberta",
+            GestureName.POINT: "1 dedo",
+            GestureName.V_SIGN: "V",
+            GestureName.THUMB_UP: "polegar",
+            GestureName.CLOSED_FIST: "punho fechado",
+            GestureName.DOUBLE_CLOSED_FIST: "dois punhos",
+            GestureName.PRAYER_HANDS: "maos em oracao",
+        }
+        return names[gesture]
+
+    @staticmethod
+    def _operational_raw_text(vision_inputs: VisionInputs) -> str:
+        if vision_inputs.marker_detected:
+            return "MARKER"
+
+        if vision_inputs.gesture is not None:
+            return vision_inputs.gesture.value
+
+        return "NONE"
 
     def _handle_warming_up_state(self) -> None:
         if not self._vision_system.poll_ready():
@@ -475,6 +720,7 @@ class VanCocoApp:
         if accepted_result is None:
             return False
 
+        self._last_operational_event = f"fallback:{gesture.value}"
         state = self._state_manager.state
         if state is AppState.IDLE_BLACK_SCREEN:
             if accepted_result.action is None:
@@ -534,6 +780,7 @@ class VanCocoApp:
         return False
 
     def _apply_fallback_robot_event(self, event: RobotEvent) -> None:
+        self._last_operational_event = f"fallback:{event.code}"
         state = self._state_manager.state
         if state is AppState.WAITING_PRESENTATION:
             transition = self._story_engine.consume_robot_event(event)
@@ -593,6 +840,7 @@ class VanCocoApp:
             return
 
     def _apply_fallback_video8_trigger(self, trigger_name: CameraTriggerName) -> None:
+        self._last_operational_event = f"fallback:{trigger_name.value}"
         transition = self._story_engine.consume_video8_trigger(trigger_name)
         if transition.video_path is None:
             return
@@ -607,10 +855,14 @@ class VanCocoApp:
         if not TEST_GESTURES_MODE:
             gesture_result = self._gesture_mapper.map_gesture(vision_inputs.gesture)
             self._record_gesture_perf(vision_inputs.gesture, gesture_result)
+            if gesture_result is not None:
+                self._last_operational_event = gesture_result.gesture.value
             return gesture_result
 
         gesture_result = self._gesture_mapper.map_gesture(vision_inputs.gesture)
         self._record_gesture_perf(vision_inputs.gesture, gesture_result)
+        if gesture_result is not None:
+            self._last_operational_event = gesture_result.gesture.value
         self._log_test_gesture_result(
             raw_gesture=vision_inputs.gesture,
             gesture_result=gesture_result,
@@ -635,6 +887,8 @@ class VanCocoApp:
 
         if TEST_GESTURES_MODE:
             self._log_test_video8_result(vision_inputs, trigger_name, gesture_result)
+        if trigger_name is not None:
+            self._last_operational_event = trigger_name.value
         return trigger_name
 
     def _log_test_gesture_result(

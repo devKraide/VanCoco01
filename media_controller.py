@@ -11,7 +11,7 @@ import PySide6
 import cv2
 import vlc
 
-from config import VISION_PREVIEW_OVERLAY, WINDOW_NAME
+from config import OPERATIONAL_OVERLAY_ENABLED, VISION_PREVIEW_OVERLAY, WINDOW_NAME
 
 
 VLC_ARGS = (
@@ -45,6 +45,8 @@ from PySide6.QtWidgets import QApplication, QLabel, QWidget
 PREVIEW_WIDTH = 360
 PREVIEW_HEIGHT = 200
 PREVIEW_MARGIN = 14
+OPERATIONAL_OVERLAY_WIDTH = 420
+OPERATIONAL_OVERLAY_HEIGHT = 360
 
 
 class PresentationWindow(QWidget):
@@ -53,6 +55,7 @@ class PresentationWindow(QWidget):
         self._controller = controller
         self._video_surface = QWidget(self)
         self._preview_overlay = QLabel(self)
+        self._operational_overlay = QLabel(self)
         self._configure_window()
 
     @property
@@ -62,6 +65,10 @@ class PresentationWindow(QWidget):
     @property
     def preview_overlay(self) -> QLabel:
         return self._preview_overlay
+
+    @property
+    def operational_overlay(self) -> QLabel:
+        return self._operational_overlay
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key_Escape:
@@ -109,12 +116,36 @@ class PresentationWindow(QWidget):
         self._preview_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self._preview_overlay.hide()
 
+        self._operational_overlay.setGeometry(
+            PREVIEW_MARGIN,
+            PREVIEW_MARGIN + PREVIEW_HEIGHT + 12,
+            OPERATIONAL_OVERLAY_WIDTH,
+            OPERATIONAL_OVERLAY_HEIGHT,
+        )
+        self._operational_overlay.setStyleSheet(
+            "background-color: rgba(0, 0, 0, 210);"
+            "border: 1px solid rgba(255, 255, 255, 130);"
+            "color: white;"
+            "font-family: monospace;"
+            "font-size: 18px;"
+            "padding: 10px;"
+        )
+        self._operational_overlay.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self._operational_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._operational_overlay.hide()
+
     def _position_preview_overlay(self) -> None:
         self._preview_overlay.setGeometry(
             PREVIEW_MARGIN,
             PREVIEW_MARGIN,
             PREVIEW_WIDTH,
             PREVIEW_HEIGHT,
+        )
+        self._operational_overlay.setGeometry(
+            PREVIEW_MARGIN,
+            PREVIEW_MARGIN + PREVIEW_HEIGHT + 12,
+            OPERATIONAL_OVERLAY_WIDTH,
+            OPERATIONAL_OVERLAY_HEIGHT,
         )
 
 
@@ -143,6 +174,7 @@ class MediaController:
         self._window.video_surface.show()
         self._window.video_surface.setGeometry(0, 0, 1, 1)
         self._window.preview_overlay.raise_()
+        self._window.operational_overlay.raise_()
         self._window.showFullScreen()
         self._window.raise_()
         self._window.activateWindow()
@@ -150,6 +182,7 @@ class MediaController:
 
     def start_video(self, video_path: Path) -> None:
         self.hide_preview_overlay()
+        self.hide_operational_overlay()
         self.stop_video()
         if not video_path.exists():
             raise FileNotFoundError(f"Nao foi possivel abrir o video: {video_path}")
@@ -193,6 +226,23 @@ class MediaController:
             return
 
         self._window.preview_overlay.hide()
+
+    def show_operational_overlay(
+        self,
+        lines: list[str],
+    ) -> None:
+        if not OPERATIONAL_OVERLAY_ENABLED:
+            return
+
+        self._window.operational_overlay.setText("\n".join(lines))
+        self._window.operational_overlay.show()
+        self._window.operational_overlay.raise_()
+
+    def hide_operational_overlay(self) -> None:
+        if not OPERATIONAL_OVERLAY_ENABLED:
+            return
+
+        self._window.operational_overlay.hide()
 
     def start_mock_video(self, duration_seconds: float) -> None:
         self.stop_video()

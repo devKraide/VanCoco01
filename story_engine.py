@@ -253,6 +253,12 @@ class StoryEngine:
 
         return None
 
+    def current_pending_presentation_robots(self) -> set[str]:
+        if self._stage is not StoryStage.WAITING_PRESENTATION:
+            return set()
+
+        return set(self._pending_robots)
+
     def _build_current_step(self) -> Optional[StoryStep]:
         if self._stage is StoryStage.WAIT_HAND_OPEN:
             return StoryStep(
