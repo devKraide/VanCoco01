@@ -21,6 +21,10 @@ constexpr int I2C_SDA_PIN = 21;
 constexpr int I2C_SCL_PIN = 22;
 constexpr int ULTRA_TRIG_PIN = 33;
 constexpr int ULTRA_ECHO_PIN = 32;
+constexpr int MOTOR_A_PWM_CHANNEL = 6;
+constexpr int MOTOR_B_PWM_CHANNEL = 7;
+constexpr int MOTOR_PWM_FREQUENCY_HZ = 20000;
+constexpr int MOTOR_PWM_RESOLUTION_BITS = 8;
 constexpr bool MOTOR_A_INVERTED = false;
 constexpr bool MOTOR_B_INVERTED = true;
 
@@ -91,6 +95,8 @@ LocalStage localStage = LocalStage::READY_FOR_PRESENT;
 
 void setMotorA(bool forward, int speedValue);
 void setMotorB(bool forward, int speedValue);
+void configureMotorPwm();
+void writeMotorPwm(int channel, int speedValue);
 void applyDrive(bool motorAForward, int motorASpeed, bool motorBForward, int motorBSpeed);
 void rampDrive(bool motorAForward, bool motorBForward, int targetSpeed);
 void softStopDrive(bool motorAForward, bool motorBForward, int currentSpeed);
@@ -147,10 +153,15 @@ void setup() {
   pinMode(ULTRA_ECHO_PIN, INPUT);
   digitalWrite(ULTRA_TRIG_PIN, LOW);
 
+  configureMotorPwm();
+  Serial.println("MOTOR_PWM_LEDC_INIT");
   stopMotors();
+  ESP32PWM::allocateTimer(0);
+  Serial.println("SERVO_PWM_TIMER_RESERVED");
   actionServo.setPeriodHertz(50);
   actionServo.attach(SERVO_PIN, 500, 2400);
   actionServo.write(SERVO_BACK_ANGLE);
+  Serial.println("SERVO_BACK_ON_SETUP");
   Serial.println("SERVO_INIT_OK");
   mpuReady = initializeMpu();
   Serial.println(mpuReady ? "MPU_INIT_OK" : "MPU_INIT_FAILED");
@@ -263,16 +274,18 @@ void handleResetCommand() {
 
 bool applyReset() {
   stopMotors();
-  actionServo.write(SERVO_BACK_ANGLE);
   ultraPresenceLatched = false;
 
   if (isPresenting) {
     resetRequested = true;
+    Serial.println("RESET_DURING_RUN_NO_SERVO_WRITE");
     Serial.println("RESET_ABORT_REQUESTED");
     Serial.println("RESET_APPLIED");
     return false;
   }
 
+  actionServo.write(SERVO_BACK_ANGLE);
+  Serial.println("SERVO_BACK_ON_RESET_IDLE");
   resetRequested = false;
   isPresenting = false;
   localStage = LocalStage::READY_FOR_PRESENT;
@@ -704,12 +717,35 @@ void turnLeftAtSpeed(int speedValue) {
 }
 
 void stopMotors() {
-  analogWrite(ENA, 0);
-  analogWrite(ENB, 0);
+  writeMotorPwm(MOTOR_A_PWM_CHANNEL, 0);
+  writeMotorPwm(MOTOR_B_PWM_CHANNEL, 0);
   digitalWrite(IN1, LOW);
   digitalWrite(IN2, LOW);
   digitalWrite(IN3, LOW);
   digitalWrite(IN4, LOW);
+}
+
+void configureMotorPwm() {
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcAttachChannel(ENA, MOTOR_PWM_FREQUENCY_HZ, MOTOR_PWM_RESOLUTION_BITS, MOTOR_A_PWM_CHANNEL);
+  ledcAttachChannel(ENB, MOTOR_PWM_FREQUENCY_HZ, MOTOR_PWM_RESOLUTION_BITS, MOTOR_B_PWM_CHANNEL);
+#else
+  ledcSetup(MOTOR_A_PWM_CHANNEL, MOTOR_PWM_FREQUENCY_HZ, MOTOR_PWM_RESOLUTION_BITS);
+  ledcSetup(MOTOR_B_PWM_CHANNEL, MOTOR_PWM_FREQUENCY_HZ, MOTOR_PWM_RESOLUTION_BITS);
+  ledcAttachPin(ENA, MOTOR_A_PWM_CHANNEL);
+  ledcAttachPin(ENB, MOTOR_B_PWM_CHANNEL);
+#endif
+  writeMotorPwm(MOTOR_A_PWM_CHANNEL, 0);
+  writeMotorPwm(MOTOR_B_PWM_CHANNEL, 0);
+}
+
+void writeMotorPwm(int channel, int speedValue) {
+  int constrainedSpeed = constrain(speedValue, 0, 255);
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcWriteChannel(channel, constrainedSpeed);
+#else
+  ledcWrite(channel, constrainedSpeed);
+#endif
 }
 
 void applyDrive(bool motorAForward, int motorASpeed, bool motorBForward, int motorBSpeed) {
@@ -780,12 +816,12 @@ void setMotorA(bool forward, int speedValue) {
   bool physicalForward = MOTOR_A_INVERTED ? !forward : forward;
   digitalWrite(IN1, physicalForward ? HIGH : LOW);
   digitalWrite(IN2, physicalForward ? LOW : HIGH);
-  analogWrite(ENA, speedValue);
+  writeMotorPwm(MOTOR_A_PWM_CHANNEL, speedValue);
 }
 
 void setMotorB(bool forward, int speedValue) {
   bool physicalForward = MOTOR_B_INVERTED ? !forward : forward;
   digitalWrite(IN3, physicalForward ? HIGH : LOW);
   digitalWrite(IN4, physicalForward ? LOW : HIGH);
-  analogWrite(ENB, speedValue);
+  writeMotorPwm(MOTOR_B_PWM_CHANNEL, speedValue);
 }
