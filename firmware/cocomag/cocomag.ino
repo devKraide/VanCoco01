@@ -36,14 +36,14 @@ constexpr unsigned long BACKWARD_MS = 800;
 constexpr unsigned long STOP_MS = 250;
 constexpr unsigned long PRESENT_FORWARD_MS = 2000;
 constexpr unsigned long PRESENT_BACKWARD_MS = 1500;
-constexpr int SERVO_REST_ANGLE = 140;
-constexpr int SERVO_PICKUP_ANGLE = 0;
-constexpr int SERVO_PARTIAL_RETURN_ANGLE = 90;
+constexpr int SERVO_BACK_ANGLE = 0;
+constexpr int SERVO_FRONT_ANGLE = 180;
 constexpr unsigned long ACTION_FORWARD_MS = 3000;
 constexpr float ACTION_TURN_DEGREES = 90.0f;
-constexpr unsigned long ACTION_POST_TURN_FORWARD_MS = 1000;
-constexpr unsigned long SERVO_LOWER_DURATION_MS = 1800;
-constexpr unsigned long SERVO_PICKUP_HOLD_MS = 1000;
+constexpr float ACTION_TURN_BACK_DEGREES = -90.0f;
+constexpr unsigned long ACTION_POST_TURN_FORWARD_MS = 2000;
+constexpr unsigned long ACTION_BACKWARD_MS = 2000;
+constexpr unsigned long ACTION_SERVO_FRONT_HOLD_MS = 2000;
 constexpr float GYRO_Z_LSB_PER_DPS = 131.0f;
 constexpr float PRESENT_TARGET_DEGREES = 360.0f;
 constexpr float GYRO_ANGLE_SCALE = 0.75f;
@@ -98,10 +98,10 @@ void moveForward();
 void moveBackward();
 void turnRight();
 void turnRightAtSpeed(int speedValue);
+void turnLeftAtSpeed(int speedValue);
 void stopMotors();
 bool runPresentation();
 bool runAction();
-void performPickupMotion();
 bool initializeMpu();
 bool calibrateGyroBias();
 bool rotateDegrees(float targetDegrees);
@@ -150,7 +150,7 @@ void setup() {
   stopMotors();
   actionServo.setPeriodHertz(50);
   actionServo.attach(SERVO_PIN, 500, 2400);
-  actionServo.write(SERVO_REST_ANGLE);
+  actionServo.write(SERVO_BACK_ANGLE);
   Serial.println("SERVO_INIT_OK");
   mpuReady = initializeMpu();
   Serial.println(mpuReady ? "MPU_INIT_OK" : "MPU_INIT_FAILED");
@@ -263,6 +263,7 @@ void handleResetCommand() {
 
 bool applyReset() {
   stopMotors();
+  actionServo.write(SERVO_BACK_ANGLE);
   ultraPresenceLatched = false;
 
   if (isPresenting) {
@@ -415,6 +416,7 @@ bool runPresentation() {
 
 bool runAction() {
   Serial.println("ACTION_START");
+  Serial.println("COCOMAG_ACTION_FORWARD_1");
   moveForward();
   if (!delayWithReset(ACTION_FORWARD_MS)) {
     return false;
@@ -425,13 +427,16 @@ bool runAction() {
     return false;
   }
 
+  Serial.println("COCOMAG_ACTION_TURN_90");
   if (!rotateDegrees(ACTION_TURN_DEGREES)) {
+    stopMotors();
     return false;
   }
   if (!delayWithReset(STOP_MS)) {
     return false;
   }
 
+  Serial.println("COCOMAG_ACTION_FORWARD_2");
   moveForward();
   if (!delayWithReset(ACTION_POST_TURN_FORWARD_MS)) {
     return false;
@@ -442,18 +447,35 @@ bool runAction() {
     return false;
   }
 
+  Serial.println("COCOMAG_ACTION_TURN_BACK");
+  if (!rotateDegrees(ACTION_TURN_BACK_DEGREES)) {
+    stopMotors();
+    return false;
+  }
+  if (!delayWithReset(STOP_MS)) {
+    return false;
+  }
+
+  Serial.println("COCOMAG_SERVO_FRONT");
+  actionServo.write(SERVO_FRONT_ANGLE);
+  if (!delayWithReset(ACTION_SERVO_FRONT_HOLD_MS)) {
+    return false;
+  }
+
+  Serial.println("COCOMAG_ACTION_BACKWARD");
+  moveBackward();
+  if (!delayWithReset(ACTION_BACKWARD_MS)) {
+    return false;
+  }
+
+  softStopDrive(false, false, MOVE_SPEED);
+  if (!delayWithReset(STOP_MS)) {
+    return false;
+  }
+
   emitLine("COCOMAG_DONE");
   Serial.println("ACTION_DONE_SENT");
   return true;
-}
-
-void performPickupMotion() {
-  actionServo.write(SERVO_REST_ANGLE);
-  delay(STOP_MS);
-  actionServo.write(SERVO_PICKUP_ANGLE);
-  delay(SERVO_PICKUP_HOLD_MS);
-  actionServo.write(SERVO_PARTIAL_RETURN_ANGLE);
-  delay(STOP_MS);
 }
 
 bool initializeMpu() {
@@ -518,7 +540,9 @@ bool rotateDegrees(float targetDegrees, unsigned long timeoutMs, bool logStation
   unsigned long lastSampleAt = micros();
   unsigned long lastDebugLogAt = millis();
   float accumulatedDegrees = 0.0f;
-  float completionTargetDegrees = targetDegrees - ROTATION_COMPLETION_TOLERANCE_DEGREES;
+  float absoluteTargetDegrees = fabsf(targetDegrees);
+  bool turnRightDirection = targetDegrees >= 0.0f;
+  float completionTargetDegrees = absoluteTargetDegrees - ROTATION_COMPLETION_TOLERANCE_DEGREES;
   if (completionTargetDegrees < 0.0f) {
     completionTargetDegrees = 0.0f;
   }
@@ -530,9 +554,15 @@ bool rotateDegrees(float targetDegrees, unsigned long timeoutMs, bool logStation
   Serial.print("ROTATION_COMPLETION_TARGET=");
   Serial.println(completionTargetDegrees, 1);
   Serial.println("ROTATION_ANGLE_RESET=0.0");
-  Serial.print("MOTOR_SPIN_START left=FORWARD right=BACKWARD speed=");
+  Serial.print("MOTOR_SPIN_START direction=");
+  Serial.print(turnRightDirection ? "RIGHT" : "LEFT");
+  Serial.print(" speed=");
   Serial.println(TURN_SPEED);
-  turnRightAtSpeed(TURN_SPEED);
+  if (turnRightDirection) {
+    turnRightAtSpeed(TURN_SPEED);
+  } else {
+    turnLeftAtSpeed(TURN_SPEED);
+  }
   while (accumulatedDegrees < completionTargetDegrees) {
     if (shouldAbortForReset()) {
       Serial.println("ROTATION_ABORTED_BY_RESET");
@@ -568,7 +598,7 @@ bool rotateDegrees(float targetDegrees, unsigned long timeoutMs, bool logStation
       Serial.print("ROTATION_TIMEOUT angle=");
       Serial.print(accumulatedDegrees, 1);
       Serial.print(" target=");
-      Serial.print(targetDegrees, 1);
+      Serial.print(absoluteTargetDegrees, 1);
       Serial.print(" elapsed=");
       Serial.println(elapsedMs);
       if (accumulatedDegrees >= completionTargetDegrees) {
@@ -667,6 +697,10 @@ void turnRight() {
 
 void turnRightAtSpeed(int speedValue) {
   applyDrive(true, speedValue, false, speedValue);
+}
+
+void turnLeftAtSpeed(int speedValue) {
+  applyDrive(false, speedValue, true, speedValue);
 }
 
 void stopMotors() {
