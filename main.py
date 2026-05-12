@@ -180,6 +180,7 @@ class VanCocoApp:
         ]
         if overlay_mode == "camera_and_logs":
             lines.extend(self._operational_visual_lines(vision_request, vision_inputs))
+            lines.extend(self._operational_robot_lines())
         elif overlay_mode == "logs_only":
             self._media_controller.hide_preview_overlay()
             lines.extend(self._operational_system_lines())

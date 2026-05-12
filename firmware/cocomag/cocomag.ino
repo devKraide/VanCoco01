@@ -21,6 +21,10 @@ constexpr int I2C_SDA_PIN = 21;
 constexpr int I2C_SCL_PIN = 22;
 constexpr int ULTRA_TRIG_PIN = 33;
 constexpr int ULTRA_ECHO_PIN = 32;
+constexpr int MOTOR_A_PWM_CHANNEL = 6;
+constexpr int MOTOR_B_PWM_CHANNEL = 7;
+constexpr int MOTOR_PWM_FREQUENCY_HZ = 20000;
+constexpr int MOTOR_PWM_RESOLUTION_BITS = 8;
 constexpr bool MOTOR_A_INVERTED = false;
 constexpr bool MOTOR_B_INVERTED = true;
 
@@ -36,14 +40,14 @@ constexpr unsigned long BACKWARD_MS = 800;
 constexpr unsigned long STOP_MS = 250;
 constexpr unsigned long PRESENT_FORWARD_MS = 2000;
 constexpr unsigned long PRESENT_BACKWARD_MS = 1500;
-constexpr int SERVO_REST_ANGLE = 140;
-constexpr int SERVO_PICKUP_ANGLE = 0;
-constexpr int SERVO_PARTIAL_RETURN_ANGLE = 90;
+constexpr int SERVO_BACK_ANGLE = 0;
+constexpr int SERVO_FRONT_ANGLE = 180;
 constexpr unsigned long ACTION_FORWARD_MS = 3000;
 constexpr float ACTION_TURN_DEGREES = 90.0f;
-constexpr unsigned long ACTION_POST_TURN_FORWARD_MS = 1000;
-constexpr unsigned long SERVO_LOWER_DURATION_MS = 1800;
-constexpr unsigned long SERVO_PICKUP_HOLD_MS = 1000;
+constexpr float ACTION_TURN_BACK_DEGREES = -90.0f;
+constexpr unsigned long ACTION_POST_TURN_FORWARD_MS = 2000;
+constexpr unsigned long ACTION_BACKWARD_MS = 2000;
+constexpr unsigned long ACTION_SERVO_FRONT_HOLD_MS = 2000;
 constexpr float GYRO_Z_LSB_PER_DPS = 131.0f;
 constexpr float PRESENT_TARGET_DEGREES = 360.0f;
 constexpr float GYRO_ANGLE_SCALE = 0.75f;
@@ -91,6 +95,8 @@ LocalStage localStage = LocalStage::READY_FOR_PRESENT;
 
 void setMotorA(bool forward, int speedValue);
 void setMotorB(bool forward, int speedValue);
+void configureMotorPwm();
+void writeMotorPwm(int channel, int speedValue);
 void applyDrive(bool motorAForward, int motorASpeed, bool motorBForward, int motorBSpeed);
 void rampDrive(bool motorAForward, bool motorBForward, int targetSpeed);
 void softStopDrive(bool motorAForward, bool motorBForward, int currentSpeed);
@@ -98,10 +104,10 @@ void moveForward();
 void moveBackward();
 void turnRight();
 void turnRightAtSpeed(int speedValue);
+void turnLeftAtSpeed(int speedValue);
 void stopMotors();
 bool runPresentation();
 bool runAction();
-void performPickupMotion();
 bool initializeMpu();
 bool calibrateGyroBias();
 bool rotateDegrees(float targetDegrees);
@@ -147,10 +153,15 @@ void setup() {
   pinMode(ULTRA_ECHO_PIN, INPUT);
   digitalWrite(ULTRA_TRIG_PIN, LOW);
 
+  configureMotorPwm();
+  Serial.println("MOTOR_PWM_LEDC_INIT");
   stopMotors();
+  ESP32PWM::allocateTimer(0);
+  Serial.println("SERVO_PWM_TIMER_RESERVED");
   actionServo.setPeriodHertz(50);
   actionServo.attach(SERVO_PIN, 500, 2400);
-  actionServo.write(SERVO_REST_ANGLE);
+  actionServo.write(SERVO_BACK_ANGLE);
+  Serial.println("SERVO_BACK_ON_SETUP");
   Serial.println("SERVO_INIT_OK");
   mpuReady = initializeMpu();
   Serial.println(mpuReady ? "MPU_INIT_OK" : "MPU_INIT_FAILED");
@@ -267,11 +278,14 @@ bool applyReset() {
 
   if (isPresenting) {
     resetRequested = true;
+    Serial.println("RESET_DURING_RUN_NO_SERVO_WRITE");
     Serial.println("RESET_ABORT_REQUESTED");
     Serial.println("RESET_APPLIED");
     return false;
   }
 
+  actionServo.write(SERVO_BACK_ANGLE);
+  Serial.println("SERVO_BACK_ON_RESET_IDLE");
   resetRequested = false;
   isPresenting = false;
   localStage = LocalStage::READY_FOR_PRESENT;
@@ -415,6 +429,7 @@ bool runPresentation() {
 
 bool runAction() {
   Serial.println("ACTION_START");
+  Serial.println("COCOMAG_ACTION_FORWARD_1");
   moveForward();
   if (!delayWithReset(ACTION_FORWARD_MS)) {
     return false;
@@ -425,13 +440,16 @@ bool runAction() {
     return false;
   }
 
+  Serial.println("COCOMAG_ACTION_TURN_90");
   if (!rotateDegrees(ACTION_TURN_DEGREES)) {
+    stopMotors();
     return false;
   }
   if (!delayWithReset(STOP_MS)) {
     return false;
   }
 
+  Serial.println("COCOMAG_ACTION_FORWARD_2");
   moveForward();
   if (!delayWithReset(ACTION_POST_TURN_FORWARD_MS)) {
     return false;
@@ -442,18 +460,35 @@ bool runAction() {
     return false;
   }
 
+  Serial.println("COCOMAG_ACTION_TURN_BACK");
+  if (!rotateDegrees(ACTION_TURN_BACK_DEGREES)) {
+    stopMotors();
+    return false;
+  }
+  if (!delayWithReset(STOP_MS)) {
+    return false;
+  }
+
+  Serial.println("COCOMAG_SERVO_FRONT");
+  actionServo.write(SERVO_FRONT_ANGLE);
+  if (!delayWithReset(ACTION_SERVO_FRONT_HOLD_MS)) {
+    return false;
+  }
+
+  Serial.println("COCOMAG_ACTION_BACKWARD");
+  moveBackward();
+  if (!delayWithReset(ACTION_BACKWARD_MS)) {
+    return false;
+  }
+
+  softStopDrive(false, false, MOVE_SPEED);
+  if (!delayWithReset(STOP_MS)) {
+    return false;
+  }
+
   emitLine("COCOMAG_DONE");
   Serial.println("ACTION_DONE_SENT");
   return true;
-}
-
-void performPickupMotion() {
-  actionServo.write(SERVO_REST_ANGLE);
-  delay(STOP_MS);
-  actionServo.write(SERVO_PICKUP_ANGLE);
-  delay(SERVO_PICKUP_HOLD_MS);
-  actionServo.write(SERVO_PARTIAL_RETURN_ANGLE);
-  delay(STOP_MS);
 }
 
 bool initializeMpu() {
@@ -518,7 +553,9 @@ bool rotateDegrees(float targetDegrees, unsigned long timeoutMs, bool logStation
   unsigned long lastSampleAt = micros();
   unsigned long lastDebugLogAt = millis();
   float accumulatedDegrees = 0.0f;
-  float completionTargetDegrees = targetDegrees - ROTATION_COMPLETION_TOLERANCE_DEGREES;
+  float absoluteTargetDegrees = fabsf(targetDegrees);
+  bool turnRightDirection = targetDegrees >= 0.0f;
+  float completionTargetDegrees = absoluteTargetDegrees - ROTATION_COMPLETION_TOLERANCE_DEGREES;
   if (completionTargetDegrees < 0.0f) {
     completionTargetDegrees = 0.0f;
   }
@@ -530,9 +567,15 @@ bool rotateDegrees(float targetDegrees, unsigned long timeoutMs, bool logStation
   Serial.print("ROTATION_COMPLETION_TARGET=");
   Serial.println(completionTargetDegrees, 1);
   Serial.println("ROTATION_ANGLE_RESET=0.0");
-  Serial.print("MOTOR_SPIN_START left=FORWARD right=BACKWARD speed=");
+  Serial.print("MOTOR_SPIN_START direction=");
+  Serial.print(turnRightDirection ? "RIGHT" : "LEFT");
+  Serial.print(" speed=");
   Serial.println(TURN_SPEED);
-  turnRightAtSpeed(TURN_SPEED);
+  if (turnRightDirection) {
+    turnRightAtSpeed(TURN_SPEED);
+  } else {
+    turnLeftAtSpeed(TURN_SPEED);
+  }
   while (accumulatedDegrees < completionTargetDegrees) {
     if (shouldAbortForReset()) {
       Serial.println("ROTATION_ABORTED_BY_RESET");
@@ -568,7 +611,7 @@ bool rotateDegrees(float targetDegrees, unsigned long timeoutMs, bool logStation
       Serial.print("ROTATION_TIMEOUT angle=");
       Serial.print(accumulatedDegrees, 1);
       Serial.print(" target=");
-      Serial.print(targetDegrees, 1);
+      Serial.print(absoluteTargetDegrees, 1);
       Serial.print(" elapsed=");
       Serial.println(elapsedMs);
       if (accumulatedDegrees >= completionTargetDegrees) {
@@ -669,13 +712,40 @@ void turnRightAtSpeed(int speedValue) {
   applyDrive(true, speedValue, false, speedValue);
 }
 
+void turnLeftAtSpeed(int speedValue) {
+  applyDrive(false, speedValue, true, speedValue);
+}
+
 void stopMotors() {
-  analogWrite(ENA, 0);
-  analogWrite(ENB, 0);
+  writeMotorPwm(MOTOR_A_PWM_CHANNEL, 0);
+  writeMotorPwm(MOTOR_B_PWM_CHANNEL, 0);
   digitalWrite(IN1, LOW);
   digitalWrite(IN2, LOW);
   digitalWrite(IN3, LOW);
   digitalWrite(IN4, LOW);
+}
+
+void configureMotorPwm() {
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcAttachChannel(ENA, MOTOR_PWM_FREQUENCY_HZ, MOTOR_PWM_RESOLUTION_BITS, MOTOR_A_PWM_CHANNEL);
+  ledcAttachChannel(ENB, MOTOR_PWM_FREQUENCY_HZ, MOTOR_PWM_RESOLUTION_BITS, MOTOR_B_PWM_CHANNEL);
+#else
+  ledcSetup(MOTOR_A_PWM_CHANNEL, MOTOR_PWM_FREQUENCY_HZ, MOTOR_PWM_RESOLUTION_BITS);
+  ledcSetup(MOTOR_B_PWM_CHANNEL, MOTOR_PWM_FREQUENCY_HZ, MOTOR_PWM_RESOLUTION_BITS);
+  ledcAttachPin(ENA, MOTOR_A_PWM_CHANNEL);
+  ledcAttachPin(ENB, MOTOR_B_PWM_CHANNEL);
+#endif
+  writeMotorPwm(MOTOR_A_PWM_CHANNEL, 0);
+  writeMotorPwm(MOTOR_B_PWM_CHANNEL, 0);
+}
+
+void writeMotorPwm(int channel, int speedValue) {
+  int constrainedSpeed = constrain(speedValue, 0, 255);
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcWriteChannel(channel, constrainedSpeed);
+#else
+  ledcWrite(channel, constrainedSpeed);
+#endif
 }
 
 void applyDrive(bool motorAForward, int motorASpeed, bool motorBForward, int motorBSpeed) {
@@ -746,12 +816,12 @@ void setMotorA(bool forward, int speedValue) {
   bool physicalForward = MOTOR_A_INVERTED ? !forward : forward;
   digitalWrite(IN1, physicalForward ? HIGH : LOW);
   digitalWrite(IN2, physicalForward ? LOW : HIGH);
-  analogWrite(ENA, speedValue);
+  writeMotorPwm(MOTOR_A_PWM_CHANNEL, speedValue);
 }
 
 void setMotorB(bool forward, int speedValue) {
   bool physicalForward = MOTOR_B_INVERTED ? !forward : forward;
   digitalWrite(IN3, physicalForward ? HIGH : LOW);
   digitalWrite(IN4, physicalForward ? LOW : HIGH);
-  analogWrite(ENB, speedValue);
+  writeMotorPwm(MOTOR_B_PWM_CHANNEL, speedValue);
 }
