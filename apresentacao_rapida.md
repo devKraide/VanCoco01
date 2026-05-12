@@ -25,13 +25,12 @@ sudo rfcomm bind /dev/rfcomm1 3C:E9:0E:8C:02:EE 1
 
 export COCOMAG_PORT=/dev/rfcomm0
 export COCOVISION_PORT=/dev/rfcomm1
-export CENTRAL_FALLBACK_PORT=/dev/ttyUSB0
 ```
 
 ## 4. Rodar
 
 ```bash
-python3 main.py
+python main.py
 ```
 
 Para sair: `q` ou `Esc`.
