@@ -1,61 +1,54 @@
 # VanCoco
 
-VanCoco e um sistema interativo para apresentacao OBR. O Python controla a
-narrativa, detecta gestos pela camera, toca videos e conversa com os robos por
-Bluetooth/serial.
+VanCoco e um sistema interativo para apresentacao/competicao OBR. A aplicacao
+Python coordena a narrativa, le gestos pela camera, reproduz videos em tela
+cheia, conversa com os robos CocoMag e CocoVision por Bluetooth/RFCOMM e aceita
+um fallback central por USB.
 
-Componentes principais:
+Sistema alvo de operacao: Ubuntu 24.04 LTS.
 
-- Python
-- OpenCV/MediaPipe
-- VLC/libVLC e PySide6
-- Bluetooth/Serial
-- ESP32 CocoMag e CocoVision
-- Arduino Nano como fallback central por USB
+## Visao Geral
 
-Sistema alvo oficial: Ubuntu 24.04 LTS.
+O projeto combina software de palco, visao computacional e robos embarcados:
 
-## Requisitos
+- `main.py`: ponto de entrada e orquestrador do loop principal.
+- `vision.py`: captura da camera, MediaPipe Hands/Pose e ArUco.
+- `gesture_mapper.py`: estabilizacao temporal dos gestos antes da narrativa.
+- `story_engine.py`: regras narrativas, videos, comandos e respostas esperadas.
+- `state_manager.py`: estado operacional do app.
+- `media_controller.py`: janela fullscreen, tela preta, overlay e VLC/libVLC.
+- `robot_comm.py`: comunicacao serial/RFCOMM com CocoMag, CocoVision e fallback.
+- `firmware/cocomag/cocomag.ino`: firmware do CocoMag.
+- `firmware/cocovision/cocovision.ino`: firmware do CocoVision.
+- `firmware/centralfallback/centralfallback.ino`: gatilho central por USB.
 
-- Ubuntu 24.04 LTS
-- Python 3
-- Git
-- VLC/libVLC
-- Camera ou webcam
-- Bluetooth funcionando no PC
-- ESP32 CocoMag e CocoVision pareados
-- Arduino Nano conectado via USB para fallback central
+O Python e o dono da narrativa. Os robos executam comandos e respondem eventos;
+eles nao decidem o fluxo completo da apresentacao.
 
-## Dependencias Ubuntu
+## Arquitetura
 
-```bash
-sudo apt update
-sudo apt install -y git python3 python3-venv python3-pip vlc libvlc-bin libxcb-cursor0 bluez v4l-utils
-sudo usermod -aG dialout $USER
-```
+### Python/main app
 
-Depois de adicionar o usuario ao grupo `dialout`, faca logout/login antes de
-usar portas seriais sem `sudo`.
+`main.py` inicializa camera, player, narrativa e comunicacao com os robos. Em
+cada ciclo ele atualiza a UI, le entradas, aplica a state machine e executa os
+efeitos: tocar video, enviar comando ou aguardar retorno.
 
-## Baixar o projeto
+### Visao computacional
 
-```bash
-git clone <URL_DO_REPOSITORIO>
-cd vanCoco
-```
+`vision.py` usa OpenCV e MediaPipe para produzir sinais de alto nivel:
 
-## Criar ambiente Python
+- gestos de uma mao;
+- `DOUBLE_CLOSED_FIST`;
+- `PRAYER_HANDS` por pose;
+- marker ArUco para a etapa do video 8.
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip setuptools wheel
-python -m pip install -r requirements.txt
-```
+A visao so roda os detectores necessarios para o estado atual. O debounce e o
+latch ficam em `gesture_mapper.py`.
 
-## Midia esperada
+### VLC/midia
 
-Os videos devem ficar em `midia/`:
+`media_controller.py` cria uma janela fullscreen com PySide6 e acopla um player
+VLC persistente ao widget nativo. Os videos esperados ficam em `midia/`:
 
 ```text
 video1.mp4
@@ -70,11 +63,124 @@ video9a.mp4
 video9b.mp4
 ```
 
-## Conectar robos por Bluetooth
+### Overlay operacional
 
-Os ESP32 precisam estar pareados no Ubuntu antes de criar as portas RFCOMM.
+O overlay existe para operacao e debug durante ensaio/competicao:
 
-### Parear uma vez
+- `CAMERA_AND_LOGS`: estados que esperam gesto ou marker; mostra preview e logs.
+- `LOGS_ONLY`: estados que esperam robos, cor ou retorno; sem preview de camera.
+- `HIDDEN`: durante reproducao de video; video fica limpo para apresentacao.
+
+### Fallback central
+
+O fallback central e um Arduino Nano via USB. Ele envia a linha
+`CENTRAL_FALLBACK_TRIGGER`; o Python interpreta esse pulso de acordo com o estado
+atual e injeta o proximo evento esperado. O fallback nao pula a state machine.
+
+### CocoMag
+
+CocoMag e um ESP32 com motores, servo e MPU. Ele recebe comandos textuais,
+executa rotinas fisicas e responde `COCOMAG_DONE`. O servo e parte da rotina
+fisica do CocoMag, principalmente na acao.
+
+### CocoVision
+
+CocoVision e um ESP32 com motores, MPU e sensor de cor. Ele recebe comandos,
+executa movimentos, entra na fase de leitura de cor e envia `COCOVISION_DONE`
+ou eventos `COLOR_*`.
+
+## Como Rodar No Ubuntu
+
+### 1. Instalar dependencias do sistema
+
+```bash
+sudo apt update
+sudo apt install -y git python3 python3-venv python3-pip vlc libvlc-bin libxcb-cursor0 bluez v4l-utils
+sudo usermod -aG dialout $USER
+```
+
+Depois de adicionar o usuario ao grupo `dialout`, faca logout/login antes de
+usar portas seriais sem `sudo`.
+
+### 2. Baixar o projeto
+
+```bash
+git clone <URL_DO_REPOSITORIO>
+cd vanCoco
+```
+
+### 3. Criar ambiente Python
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -r requirements.txt
+```
+
+### 4. Criar portas RFCOMM
+
+Pareie os ESP32 uma vez com `bluetoothctl`. Depois, em cada sessao de
+apresentacao:
+
+```bash
+bluetoothctl devices Paired
+sudo rfcomm release /dev/rfcomm0
+sudo rfcomm release /dev/rfcomm1
+sudo rfcomm bind /dev/rfcomm0 <MAC_COCOMAG> 1
+sudo rfcomm bind /dev/rfcomm1 <MAC_COCOVISION> 1
+ls -l /dev/rfcomm0 /dev/rfcomm1
+```
+
+Padrao recomendado:
+
+- CocoMag: `/dev/rfcomm0`
+- CocoVision: `/dev/rfcomm1`
+
+### 5. Configurar fallback central
+
+Conecte o Arduino Nano por USB e identifique a porta:
+
+```bash
+ls -l /dev/ttyUSB* /dev/ttyACM*
+dmesg | tail -n 30
+```
+
+### 6. Rodar
+
+```bash
+source .venv/bin/activate
+export COCOMAG_PORT=/dev/rfcomm0
+export COCOVISION_PORT=/dev/rfcomm1
+export CENTRAL_FALLBACK_PORT=/dev/ttyUSB0
+python3 main.py
+```
+
+Use `q` ou `Esc` para sair.
+
+## Dependencias Principais
+
+Python:
+
+- `opencv-python`
+- `mediapipe`
+- `PySide6`
+- `python-vlc`
+- `pyserial`
+- `numpy`
+
+Sistema:
+
+- VLC/libVLC;
+- webcam compativel com OpenCV/V4L2;
+- Bluetooth funcional no Ubuntu;
+- acesso a portas seriais (`dialout`);
+- ESP32 pareados para CocoMag e CocoVision;
+- Arduino Nano USB para fallback central.
+
+## Bluetooth/RFCOMM
+
+### Pareamento
 
 ```bash
 bluetoothctl
@@ -90,129 +196,119 @@ quit
 
 Repita para CocoMag e CocoVision.
 
-### Criar portas RFCOMM
+### Teste isolado
 
-Use este roteiro sempre que ligar o PC/robos e for rodar a apresentacao.
-
-```bash
-bluetoothctl devices Paired
-sudo rfcomm release /dev/rfcomm0
-sudo rfcomm release /dev/rfcomm1
-sudo rfcomm bind /dev/rfcomm0 08:A6:F7:BC:35:6E 1
-sudo rfcomm bind /dev/rfcomm1 3C:E9:0E:8C:02:EE 1
-ls -l /dev/rfcomm0 /dev/rfcomm1
-export COCOMAG_PORT=/dev/rfcomm0
-export COCOVISION_PORT=/dev/rfcomm1
-```
-
-Padrao recomendado:
-
-- CocoMag: `/dev/rfcomm0`
-- CocoVision: `/dev/rfcomm1`
-
-Se `rfcomm release` disser que a porta nao existe, pode ignorar.
-
-## Conectar Arduino Nano central
-
-Conecte o Arduino Nano por USB e identifique a porta:
-
-```bash
-ls -l /dev/ttyUSB* /dev/ttyACM*
-dmesg | tail -n 30
-```
-
-Configure a porta do fallback central:
-
-```bash
-export CENTRAL_FALLBACK_PORT=/dev/ttyUSB0
-```
-
-O Nano envia a linha `CENTRAL_FALLBACK_TRIGGER`. O Python interpreta esse sinal
-na state machine e injeta o evento esperado naquele momento da narrativa.
-
-## Configuracao
-
-As configuracoes principais ficam em `config.py`.
-
-Ajuste ali quando necessario:
-
-- camera (`CAMERA_INDEX` e parametros de captura)
-- portas dos robos (`COCOMAG_PORT`, `COCOVISION_PORT`)
-- porta do fallback central (`CENTRAL_FALLBACK_PORT`)
-- caminhos dos videos em `midia/`
-- logs, debug e modo de apresentacao
-
-As variaveis de ambiente `COCOMAG_PORT`, `COCOVISION_PORT` e
-`CENTRAL_FALLBACK_PORT` podem ser usadas para sobrescrever as portas sem editar
-o arquivo.
-
-## Como rodar
+Com as portas criadas:
 
 ```bash
 source .venv/bin/activate
-export COCOMAG_PORT=/dev/rfcomm0
-export COCOVISION_PORT=/dev/rfcomm1
-export CENTRAL_FALLBACK_PORT=/dev/ttyUSB0
-python main.py
+python3 rfcomm_serial_probe.py --port /dev/rfcomm0 --command COCOMAG:PRESENT
+python3 rfcomm_serial_probe.py --port /dev/rfcomm0 --command COCOMAG:ACTION
+python3 rfcomm_serial_probe.py --port /dev/rfcomm1 --command COCOVISION:PRESENT
+python3 rfcomm_serial_probe.py --port /dev/rfcomm1 --command COCOVISION:ACTION --listen-seconds 8
+python3 rfcomm_serial_probe.py --port /dev/rfcomm1 --command COCOVISION:RETURN
 ```
 
-Logs esperados quando Bluetooth e serial estiverem funcionando:
+Veja tambem [BLUETOOTH_RFCOMM_GUIDE.md](BLUETOOTH_RFCOMM_GUIDE.md).
 
-```text
-[RobotComm] COCOMAG conectado via rfcomm em /dev/rfcomm0
-[RobotComm] COCOVISION conectado via rfcomm em /dev/rfcomm1
-```
+## Fluxo Da Apresentacao
 
-## Fluxo esperado
+| Etapa | Entrada esperada | Video | Comando enviado | Resposta esperada |
+| --- | --- | --- | --- | --- |
+| Inicio | `HAND_OPEN` | `video1.mp4` | - | fim do video |
+| Segundo gesto | `POINT` | `video2.mp4` | - | fim do video |
+| Apresentacao dos robos | fim do `video2` | - | `COCOMAG:PRESENT`, `COCOVISION:PRESENT` | `COCOMAG_DONE`, `COCOVISION_DONE` |
+| Pos-apresentacao | ambos `DONE` | `video3.mp4` | - | fim do video |
+| Acao CocoMag | `V_SIGN` | - | `COCOMAG:ACTION` | `COCOMAG_DONE` |
+| Pos-CocoMag | `COCOMAG_DONE` | `video4.mp4` | - | fim do video |
+| Video 5 | `THUMB_UP` | `video5.mp4` | - | fim do video |
+| Video 6 | `CLOSED_FIST` | `video6.mp4` | - | fim do video |
+| Acao CocoVision | fim do `video6` | - | `COCOVISION:ACTION` | `COCOVISION_DONE` |
+| Cor | `COLOR_BLUE` | `video7.mp4` | opcional `COCOVISION:COLOR_CONFIRMED` em fallback | fim do video |
+| Retorno CocoVision | fim do `video7` | - | `COCOVISION:RETURN` | `COCOVISION_DONE` |
+| Video 8 | ArUco/lupa ou `DOUBLE_CLOSED_FIST` | `video8.mp4` | - | fim do video |
+| Final | `PRAYER_HANDS` | `video9a.mp4` ou `video9b.mp4` | - | fim do video |
 
-1. A camera detecta gestos com OpenCV/MediaPipe.
-2. O Python controla a state machine da narrativa.
-3. A state machine toca videos e envia comandos aos robos.
-4. CocoMag e CocoVision respondem com eventos reais.
-5. Fallbacks entram apenas quando necessario.
+O video final e escolhido por `FINAL_OUTCOME` em `config.py`.
 
-Nenhum video deve tocar fora da state machine.
+## Gestos
 
-## Fallbacks
+- `HAND_OPEN`: mao aberta para iniciar o primeiro video.
+- `POINT`: indicador levantado para o segundo video.
+- `V_SIGN`: sinal de vitoria para liberar a acao do CocoMag.
+- `THUMB_UP`: polegar para disparar o video 5.
+- `CLOSED_FIST`: punho fechado para disparar o video 6.
+- `DOUBLE_CLOSED_FIST`: dois punhos como alternativa ao marker na etapa do video 8.
+- `PRAYER_HANDS`: maos em oracao para disparar o final.
 
-- Fallback central USB: o Arduino Nano envia `CENTRAL_FALLBACK_TRIGGER`; o
-  Python decide qual evento esperado deve ser injetado.
-- Ultrassonico local dos robos: executa a proxima acao permitida pela state
-  machine local de cada robo.
-- O fallback nao decide a narrativa. A state machine decide tudo.
+Os gestos passam por estabilizacao temporal. Se um gesto falhar, mantenha a mao
+parada por alguns frames e confira o overlay antes de mudar thresholds.
 
-## Testar comandos isolados
+## Firmware
 
-Com as portas RFCOMM criadas:
+### Comandos comuns
 
-```bash
-source .venv/bin/activate
-python rfcomm_serial_probe.py --port /dev/rfcomm0 --command COCOMAG:PRESENT
-python rfcomm_serial_probe.py --port /dev/rfcomm0 --command COCOMAG:ACTION
-python rfcomm_serial_probe.py --port /dev/rfcomm1 --command COCOVISION:PRESENT
-python rfcomm_serial_probe.py --port /dev/rfcomm1 --command COCOVISION:ACTION --listen-seconds 8
-python rfcomm_serial_probe.py --port /dev/rfcomm1 --command COCOVISION:RETURN
-```
+- `PRESENT`: rotina de apresentacao do robo.
+- `ACTION`: rotina principal de acao.
+- `RESET`: retorna o robo para estado seguro/esperado quando suportado.
+
+### CocoMag
+
+O CocoMag executa `PRESENT` e `ACTION`, usa MPU para giros e aciona o servo na
+rotina mecanica. A resposta principal para o Python e `COCOMAG_DONE`.
+
+Se o servo espasmar, priorize checagem fisica: alimentacao, GND comum, cabo,
+fixacao mecanica e estado de reset antes de alterar software.
+
+### CocoVision
+
+O CocoVision executa `PRESENT`, `ACTION` e `RETURN`, usa MPU para giros e sensor
+TCS34725 para cor. Respostas principais:
+
+- `COCOVISION_DONE`
+- `COCOVISION_COLOR=COLOR_*`
+- `COLOR_RED`, `COLOR_GREEN`, `COLOR_BLUE`
+
+O Python usa `COLOR_BLUE` no fluxo atual.
 
 ## Troubleshooting
 
-### Camera nao abre
+### Robo ausente
+
+- Confira bateria e chave geral.
+- Confira se o ESP32 esta pareado e confiavel (`trust`) no Ubuntu.
+- Recrie o bind RFCOMM.
+- Confira `COCOMAG_PORT` e `COCOVISION_PORT`.
+- Rode `rfcomm_serial_probe.py` antes da apresentacao completa.
+
+### Gesto nao reconhecido
+
+- Confira se a camera abriu e se o overlay mostra a mao.
+- Mantenha a mao dentro da ROI.
+- Evite movimentos rapidos; o gesto precisa ficar estavel.
+- Para `POINT` frontal, pequenos angulos da mao podem melhorar os landmarks.
+- Nao ajuste thresholds durante competicao sem teste rapido dos outros gestos.
+
+### Video engasgando
+
+- Confirme que VLC/libVLC esta instalado.
+- Feche apps pesados antes da apresentacao.
+- Prefira rodar em tomada, nao bateria em modo economia.
+- O player e persistente, mas cada inicio de video ainda troca midia e processa UI.
+- Se o engasgo for leve e previsivel, evite mudar VLC antes da apresentacao.
+
+### VLC logs
+
+Logs como `VLC_MEDIA_SET`, `VLC_PLAY_START` e `VLC_STOP_NO_RELEASE` ajudam a
+confirmar que o player recebeu a midia. Se VLC nao abrir, valide:
 
 ```bash
-v4l2-ctl --list-devices
-```
-
-Confirme a webcam e ajuste `CAMERA_INDEX` em `config.py`.
-
-### VLC/libVLC nao encontrado
-
-```bash
-sudo apt install -y vlc libvlc-bin
+vlc --version
 source .venv/bin/activate
-python -c "import vlc; print(vlc.__version__)"
+python3 -c "import vlc; print(vlc.__version__)"
 ```
 
-### Bluetooth nao conecta
+### Bluetooth
 
 ```bash
 bluetoothctl devices Paired
@@ -222,44 +318,51 @@ sudo rfcomm bind /dev/rfcomm0 <MAC_DO_ESP32> 1
 ls -l /dev/rfcomm0
 ```
 
-Confirme que o ESP32 esta ligado, pareado, confiavel (`trust`) e usando o MAC
-correto.
+Se a porta ficou presa, desligue o robo, libere a porta, ligue novamente e faca
+novo bind.
 
-### Porta serial sem permissao
+### Servo espasmando
 
-```bash
-groups
-sudo usermod -aG dialout $USER
-```
+- Verifique alimentacao separada/adequada para servo.
+- Confirme GND comum.
+- Verifique conector, cabo e interferencia mecanica.
+- Rode `RESET` antes de repetir a rotina.
+- Evite diagnosticar servo apenas pelo app; teste o firmware/robo isolado.
 
-Faca logout/login e tente novamente.
+### Fallback central
 
-### Robo nao responde
+- Confirme a porta com `ls -l /dev/ttyUSB* /dev/ttyACM*`.
+- Confirme `CENTRAL_FALLBACK_PORT`.
+- O sinal esperado e `CENTRAL_FALLBACK_TRIGGER`.
+- O fallback injeta o evento esperado do estado atual; se usado fora de hora, pode ser rejeitado.
 
-- Confira bateria/alimentacao do robo.
-- Confira se a porta `COCOMAG_PORT` ou `COCOVISION_PORT` aponta para o robo certo.
-- Teste com `rfcomm_serial_probe.py`.
-- Reinicie o bind RFCOMM se a conexao ficou presa.
+## Git E Release
 
-### Arduino Nano nao aparece
+- `main`: linha principal.
+- `main-recovery`: branch de recuperacao conhecida no repositorio.
+- `obr-stable-v1`: tag estavel existente para marco de competicao.
+- `v1.1`: usar como tag de evolucao somente depois de validar em hardware.
 
-```bash
-ls -l /dev/ttyUSB* /dev/ttyACM*
-dmesg | tail -n 30
-```
+Regra pratica de branch:
 
-Use cabo USB com dados, confira a porta em `CENTRAL_FALLBACK_PORT` e valide se o
-Nano esta enviando `CENTRAL_FALLBACK_TRIGGER`.
+- uma branch por mudanca;
+- prefixo recomendado: `chore/`, `fix/`, `docs/` ou `codex/`;
+- nao misturar firmware, visao e docs na mesma branch;
+- criar tag apenas depois de teste completo do fluxo.
 
-## Documentacao detalhada
+## Documentacao Detalhada
 
 - [PROJECT_DETAILS.md](PROJECT_DETAILS.md)
 - [BLUETOOTH_RFCOMM_GUIDE.md](BLUETOOTH_RFCOMM_GUIDE.md)
 - [docs/config.md](docs/config.md)
 - [docs/main.md](docs/main.md)
-- [docs/robot_comm.md](docs/robot_comm.md)
-- [docs/state_manager.md](docs/state_manager.md)
 - [docs/story_engine.md](docs/story_engine.md)
+- [docs/state_manager.md](docs/state_manager.md)
 - [docs/vision.md](docs/vision.md)
+- [docs/gesture_mapper.md](docs/gesture_mapper.md)
+- [docs/media_controller.md](docs/media_controller.md)
+- [docs/robot_comm.md](docs/robot_comm.md)
 - [docs/cocomag.ino.md](docs/cocomag.ino.md)
 - [docs/cocovision.ino.md](docs/cocovision.ino.md)
+- [docs/cocovision_serial_reader.md](docs/cocovision_serial_reader.md)
+- [docs/study_order.md](docs/study_order.md)
