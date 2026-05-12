@@ -70,10 +70,6 @@ class GestureMapper:
         return GestureResult(gesture=gesture, action=action)
 
     @property
-    def stable_frames(self) -> int:
-        return self._stable_frames
-
-    @property
     def stable_gesture(self) -> Optional[GestureName]:
         if self._stable_frames < GESTURE_STABLE_FRAMES:
             return None

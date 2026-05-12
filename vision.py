@@ -613,16 +613,6 @@ class VisionSystem:
             rejection_reason=rejection_reason,
         )
 
-    def detect_gesture(
-        self,
-        expected_gesture: Optional[GestureName] = None,
-        prioritize_prayer_hands: bool = False,
-    ) -> Optional[GestureName]:
-        return self.read_inputs(
-            expected_gesture=expected_gesture,
-            prioritize_prayer_hands=prioritize_prayer_hands,
-        ).gesture
-
     def consume_preview_frame(self):
         if not VISION_PREVIEW_OVERLAY:
             return None
