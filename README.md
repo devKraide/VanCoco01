@@ -364,6 +364,7 @@ Regra pratica de branch:
 - [docs/robot_comm.md](docs/robot_comm.md)
 - [docs/cocomag.ino.md](docs/cocomag.ino.md)
 - [docs/cocovision.ino.md](docs/cocovision.ino.md)
+- [docs/guia_modificar_robos.md](docs/guia_modificar_robos.md)
 - [docs/cocovision_serial_reader.md](docs/cocovision_serial_reader.md)
 - [docs/study_order.md](docs/study_order.md)
 - [docs/entrevista_tecnica_obr.md](docs/entrevista_tecnica_obr.md)
