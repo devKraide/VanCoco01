@@ -17,7 +17,7 @@ O script:
 O papel deste arquivo e facilitar debug do robô fora do contexto completo do app.
 
 Ele e util para responder perguntas como:
-- o `CocoVision` esta realmente enviando `COLOR_RED`, `COLOR_GREEN` e `COLOR_BLUE`?
+- o `CocoVision` esta realmente enviando eventos de cor?
 - o sensor foi encontrado pelo firmware?
 - a porta serial correta foi aberta?
 - ha ruido inesperado na saida serial?
@@ -31,10 +31,12 @@ Em termos de arquitetura, ele e um utilitario operacional, nao um modulo central
 Esse e o principal par deste script.
 
 O script espera mensagens emitidas pelo firmware, especialmente:
-- `COLOR_RED`
-- `COLOR_GREEN`
 - `COLOR_BLUE`
 - `TCS34725_NOT_FOUND`
+
+O leitor ainda reconhece `COLOR_RED` e `COLOR_GREEN` por compatibilidade de
+diagnostico, mas o firmware atual da apresentacao publica apenas `COLOR_BLUE`
+para avancar o fluxo narrativo.
 
 ### `robot_comm.py`
 
@@ -239,11 +241,12 @@ Para isso, o robô precisa ja estar configurado para emitir mensagens ou o coman
 
 ### 4. O parser nao normaliza `COCOVISION_COLOR=...`
 
-Hoje o script espera diretamente `COLOR_RED`, `COLOR_GREEN` e `COLOR_BLUE`.
+Hoje o script espera diretamente mensagens curtas como `COLOR_BLUE`.
 
 Se o firmware emitir somente o formato prefixado, ele aparecera como `UNKNOWN`.
 
-No estado atual do firmware isso nao e um problema, porque o firmware tambem emite a forma curta.
+No estado atual do firmware isso nao e um problema, porque o evento narrativo de
+cor e emitido na forma curta.
 
 ### 5. O script nao participa da narrativa
 

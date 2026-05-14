@@ -101,7 +101,7 @@ Estados atuais:
 - `WAITING_COCOVISION_ACTION_COMPLETION`
 - `WAITING_COLOR`
 - `PLAYING_COLOR_VIDEO`
-- `WAITING_VIDEO7_TRIGGER`
+- `WAITING_VIDEO6_TRIGGER`
 - `WAITING_COCOVISION_RETURN_COMPLETION`
 - `WAITING_VIDEO8_TRIGGER`
 - `WAITING_VIDEO9_TRIGGER`
@@ -235,7 +235,7 @@ So funciona em `WAITING_COCOVISION_RETURN_COMPLETION`.
 
 Quando recebe `COCOVISION_DONE`:
 - avanca para `WAITING_VIDEO8_TRIGGER`
-- retorna `video7`
+- nao retorna video; o proximo video depende do gatilho especial de `video8`
 
 ### `consume_video8_trigger()`
 
@@ -272,7 +272,8 @@ Usada quando um video de cor termina.
 Regras:
 - so funciona se a engine estiver em `PLAYING_COLOR_VIDEO`
 - se todas as cores configuradas ja foram usadas:
-  - vai para `WAITING_VIDEO7_TRIGGER`
+  - vai para `WAITING_COCOVISION_RETURN_COMPLETION`
+  - retorna comando `COCOVISION:RETURN`
 - senao:
   - volta para `WAITING_COLOR`
 
@@ -285,7 +286,8 @@ Os metodos de consulta:
 - `is_waiting_video5_trigger()`
 - `is_waiting_cocovision_action_completion()`
 - `is_waiting_color()`
-- `is_waiting_video7_trigger()`
+- `is_waiting_video6_trigger()`
+- `is_waiting_cocovision_return_completion()`
 - `is_waiting_video8_trigger()`
 - `is_waiting_video9_trigger()`
 
@@ -301,8 +303,8 @@ Mapeamento atual:
 - `WAIT_HAND_OPEN -> HAND_OPEN -> WAIT_POINT`
 - `WAIT_POINT -> POINT -> WAITING_PRESENTATION`
 - `WAITING_COCOMAG_ACTION -> V_SIGN -> WAITING_COCOMAG_ACTION_COMPLETION`
-- `WAITING_VIDEO5_TRIGGER -> THUMB_UP -> WAITING_COCOVISION_ACTION_COMPLETION`
-- `WAITING_VIDEO7_TRIGGER -> CLOSED_FIST -> WAITING_COCOVISION_RETURN_COMPLETION`
+- `WAITING_VIDEO5_TRIGGER -> THUMB_UP -> WAITING_VIDEO6_TRIGGER`
+- `WAITING_VIDEO6_TRIGGER -> CLOSED_FIST -> WAITING_COCOVISION_ACTION_COMPLETION`
 - `WAITING_VIDEO9_TRIGGER -> PRAYER_HANDS -> LOCKED_END`
 
 Se o estado atual nao depender de gesto simples, retorna `None`.
@@ -319,14 +321,17 @@ A sequencia atual codificada aqui e:
 6. acao do `CocoMag`
 7. `video4`
 8. `THUMB_UP`
-9. acao do `CocoVision`
-10. leitura de cores
-11. `CLOSED_FIST`
-12. retorno do `CocoVision`
-13. `video7`
-14. gatilho especial de `video8`
-15. `PRAYER_HANDS`
-16. video final por `FINAL_OUTCOME`
+9. `video5`
+10. `CLOSED_FIST`
+11. `video6`
+12. acao do `CocoVision`
+13. leitura de cor
+14. `COLOR_BLUE`
+15. `video7`
+16. retorno do `CocoVision`
+17. gatilho especial de `video8`
+18. `PRAYER_HANDS`
+19. video final por `FINAL_OUTCOME`
 
 ## Pontos criticos e de manutencao
 

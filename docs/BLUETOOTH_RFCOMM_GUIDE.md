@@ -299,15 +299,10 @@ Acao atual:
 
 Depois disso, o firmware pode emitir:
 
-- `COLOR_RED`
-- `COLOR_GREEN`
 - `COLOR_BLUE`
 
-e tambem o formato:
-
-- `COCOVISION_COLOR=COLOR_RED`
-- `COCOVISION_COLOR=COLOR_GREEN`
-- `COCOVISION_COLOR=COLOR_BLUE`
+O parser Python ainda aceita o formato antigo `COCOVISION_COLOR=COLOR_*`, mas o
+firmware atual da apresentacao publica `COLOR_BLUE` como evento de cor.
 
 #### `COCOVISION:RETURN`
 

@@ -64,8 +64,6 @@ Nao fala diretamente com a serial, mas depende da semantica dos eventos produzid
 Exemplos de eventos que a engine espera:
 - `COCOMAG_DONE`
 - `COCOVISION_DONE`
-- `COLOR_RED`
-- `COLOR_GREEN`
 - `COLOR_BLUE`
 
 ### Firmware dos robos
@@ -77,7 +75,7 @@ O protocolo textual depende diretamente dos firmwares:
 Este arquivo assume que os firmwares enviam linhas como:
 - `COCOMAG_DONE`
 - `COCOVISION_DONE`
-- `COLOR_RED`
+- `COLOR_BLUE`
 
 e aceitam linhas como:
 - `COCOMAG:PRESENT`
@@ -210,7 +208,8 @@ Responsabilidades:
 Regra especial importante:
 - `COCOVISION_COLOR=COLOR_RED` e reduzido para `COLOR_RED`
 
-Isso existe por compatibilidade com o firmware do `CocoVision`.
+Isso existe por compatibilidade com formatos antigos do `CocoVision`. No fluxo
+atual da apresentacao, o evento de cor usado pela narrativa e `COLOR_BLUE`.
 
 ### `_disconnect_robot()`
 
@@ -238,7 +237,7 @@ Helpers pequenos para resolver os parametros por robo.
 Se os firmwares mudarem mensagens como:
 - `COCOMAG_DONE`
 - `COCOVISION_DONE`
-- `COLOR_RED`
+- `COLOR_BLUE`
 
 este modulo precisa ser atualizado em conjunto.
 

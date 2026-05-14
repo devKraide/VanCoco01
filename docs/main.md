@@ -109,8 +109,9 @@ Cada iteracao faz, nesta ordem:
 3. consome tecla do teclado
 4. monta uma requisicao minima de visao baseada no estado atual
 5. le entradas da camera apenas se a etapa atual exigir isso
-5. trata saida (`q` ou `Esc`)
-6. despacha a execucao para o handler correspondente ao `AppState`
+6. trata saida (`q` ou `Esc`)
+7. processa o fallback central
+8. despacha a execucao para o handler correspondente ao `AppState`
 
 O dispatch principal e uma sequencia de `if` baseada no estado atual da aplicacao.
 
@@ -202,6 +203,10 @@ Espera o `COCOMAG_DONE` da fase individual do `CocoMag` e inicia o proximo video
 
 Espera `THUMB_UP` e dispara `video5`.
 
+### `_handle_waiting_video6_trigger_state()`
+
+Espera `CLOSED_FIST` e dispara `video6`.
+
 ### `_handle_waiting_cocovision_action_completion_state()`
 
 Espera o `COCOVISION_DONE` que encerra a acao inicial do `CocoVision`, limpa eventos antigos de cor e libera a fase de leitura.
@@ -215,13 +220,9 @@ Quando uma cor nova e aceita:
 - limpa eventos antigos da fila
 - inicia o video correspondente
 
-### `_handle_waiting_video7_trigger_state()`
-
-Espera `CLOSED_FIST` para iniciar o retorno do `CocoVision`.
-
 ### `_handle_waiting_cocovision_return_completion_state()`
 
-Espera o `DONE` do retorno do `CocoVision` e entao toca `video7`.
+Espera o `DONE` do retorno do `CocoVision` e entao libera a espera pelo gatilho do `video8`.
 
 ### `_handle_waiting_video8_trigger_state()`
 
@@ -242,11 +243,9 @@ Quando o gesto chega:
 
 ### `_read_trigger_source()`
 
-Faz a ponte entre:
-- teclado
-- gesto vindo da camera
+Faz a ponte entre o gesto vindo da camera e o `GestureMapper`.
 
-O teclado tem prioridade. Se nao houver tecla mapeada, usa o gesto vindo da visao.
+No modo normal, nao ha atalho de teclado para avancar gestos; o teclado e usado para sair da aplicacao. Se `TEST_GESTURES_MODE` estiver ativo, o metodo tambem emite logs de diagnostico do gesto bruto, gesto estavel e motivo de rejeicao.
 
 ### `_build_vision_request()`
 

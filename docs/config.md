@@ -167,11 +167,11 @@ Hoje mapeia:
 - `HAND_OPEN -> video1`
 - `POINT -> video2`
 - `THUMB_UP -> video5`
-- `CLOSED_FIST -> video7`
+- `CLOSED_FIST -> video6`
 
 Nem todo passo narrativo passa por esse mapa; alguns videos sao decididos pela engine.
 
-### `VIDEO3_PATH`, `VIDEO4_PATH`, `VIDEO5_PATH`, `VIDEO7_PATH`, `VIDEO8_PATH`
+### `VIDEO3_PATH`, `VIDEO4_PATH`, `VIDEO7_PATH`, `VIDEO8_PATH`
 
 Representam videos usados por transicoes narrativas especificas.
 
@@ -180,7 +180,7 @@ Representam videos usados por transicoes narrativas especificas.
 Mapeia eventos de cor recebidos do `CocoVision` para videos.
 
 No estado atual do projeto, apenas uma cor esta configurada:
-- `COLOR_BLUE -> video6.mp4`
+- `COLOR_BLUE -> video7.mp4`
 
 Outras cores ainda podem chegar do firmware, mas o app nao dispara video para elas.
 
