@@ -209,7 +209,7 @@ python3 rfcomm_serial_probe.py --port /dev/rfcomm1 --command COCOVISION:ACTION -
 python3 rfcomm_serial_probe.py --port /dev/rfcomm1 --command COCOVISION:RETURN
 ```
 
-Veja tambem [BLUETOOTH_RFCOMM_GUIDE.md](BLUETOOTH_RFCOMM_GUIDE.md).
+Veja tambem [docs/BLUETOOTH_RFCOMM_GUIDE.md](docs/BLUETOOTH_RFCOMM_GUIDE.md).
 
 ## Fluxo Da Apresentacao
 
@@ -266,8 +266,8 @@ O CocoVision executa `PRESENT`, `ACTION` e `RETURN`, usa MPU para giros e sensor
 TCS34725 para cor. Respostas principais:
 
 - `COCOVISION_DONE`
-- `COCOVISION_COLOR=COLOR_*`
-- `COLOR_RED`, `COLOR_GREEN`, `COLOR_BLUE`
+- `COLOR_BLUE`
+- `COCOVISION_COLOR=COLOR_*` ainda e aceito pelo parser por compatibilidade
 
 O Python usa `COLOR_BLUE` no fluxo atual.
 
@@ -339,9 +339,9 @@ novo bind.
 ## Git E Release
 
 - `main`: linha principal.
-- `main-recovery`: branch de recuperacao conhecida no repositorio.
+- `clean/doc`: branch atual de limpeza/documentacao.
 - `obr-stable-v1`: tag estavel existente para marco de competicao.
-- `v1.1`: usar como tag de evolucao somente depois de validar em hardware.
+- `obr-stable-v1.1`: tag estavel de evolucao validada.
 
 Regra pratica de branch:
 
@@ -352,8 +352,8 @@ Regra pratica de branch:
 
 ## Documentacao Detalhada
 
-- [PROJECT_DETAILS.md](PROJECT_DETAILS.md)
-- [BLUETOOTH_RFCOMM_GUIDE.md](BLUETOOTH_RFCOMM_GUIDE.md)
+- [apresentacao_rapida.md](apresentacao_rapida.md)
+- [docs/BLUETOOTH_RFCOMM_GUIDE.md](docs/BLUETOOTH_RFCOMM_GUIDE.md)
 - [docs/config.md](docs/config.md)
 - [docs/main.md](docs/main.md)
 - [docs/story_engine.md](docs/story_engine.md)
@@ -366,3 +366,4 @@ Regra pratica de branch:
 - [docs/cocovision.ino.md](docs/cocovision.ino.md)
 - [docs/cocovision_serial_reader.md](docs/cocovision_serial_reader.md)
 - [docs/study_order.md](docs/study_order.md)
+- [docs/entrevista_tecnica_obr.md](docs/entrevista_tecnica_obr.md)

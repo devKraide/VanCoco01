@@ -63,16 +63,17 @@ Tambem nao conversa diretamente com esse modulo, mas ambos caminham juntos:
 
 O fluxo tipico de uso do `StateManager` e:
 
-1. o app comeca em `IDLE_BLACK_SCREEN`
-2. um gesto valido chama `request_playback()`
-3. o estado passa para `PLAYING_VIDEO`
-4. quando o video termina, `main.py` escolhe a proxima transicao
-5. o estado passa para uma etapa de espera especifica:
+1. o app comeca em `WARMING_UP`
+2. quando a camera fica pronta, entra em `IDLE_BLACK_SCREEN`
+3. um gesto valido chama `request_playback()`
+4. o estado passa para `PLAYING_VIDEO`
+5. quando o video termina, `main.py` escolhe a proxima transicao
+6. o estado passa para uma etapa de espera especifica:
    - apresentacao dos robos
    - espera de gesto
    - espera de cor
    - etc.
-6. ao final de uma fase que nao cria nova espera especializada, `finish_playback()` volta o app para `IDLE_BLACK_SCREEN`
+7. ao final de uma fase que nao cria nova espera especializada, `finish_playback()` volta o app para `IDLE_BLACK_SCREEN`
 
 O modulo nao tem loop proprio. Ele e passivo: responde a chamadas feitas pelo orquestrador.
 
@@ -108,7 +109,7 @@ Estado interno:
 ### `__init__()`
 
 Inicializa:
-- estado em `IDLE_BLACK_SCREEN`
+- estado em `WARMING_UP`
 - nenhuma requisicao ativa
 - nenhum gesto recente
 - nenhum video registrado como tocado
@@ -186,6 +187,10 @@ Entra na fase em que o app aguarda o `COCOMAG_DONE`.
 
 Entra na fase de espera do `THUMB_UP`.
 
+### `enter_waiting_video6_trigger()`
+
+Entra na fase de espera do `CLOSED_FIST`.
+
 ### `enter_waiting_cocovision_action_completion()`
 
 Entra na fase de espera do `COCOVISION_DONE` apos `ACTION`.
@@ -193,10 +198,6 @@ Entra na fase de espera do `COCOVISION_DONE` apos `ACTION`.
 ### `enter_waiting_color()`
 
 Entra na fase de leitura continua de cor.
-
-### `enter_waiting_video7_trigger()`
-
-Entra na fase de espera do `CLOSED_FIST`.
 
 ### `enter_waiting_cocovision_return_completion()`
 
@@ -277,9 +278,9 @@ Cada metodo:
 
 Esse desenho deixa o `main.py` mais legivel e evita strings ou estados espalhados.
 
-### 5. O estado inicial e sempre `IDLE_BLACK_SCREEN`
+### 5. O estado inicial e sempre `WARMING_UP`
 
-Esse contrato precisa permanecer estavel, porque o restante do app assume esse ponto de partida visual e operacional.
+Esse contrato precisa permanecer estavel, porque o app aquece a camera antes de aceitar o primeiro gesto. Depois do warmup, o estado operacional vira `IDLE_BLACK_SCREEN`.
 
 ### 6. O modulo nao persiste nada
 
@@ -288,7 +289,7 @@ Todo o estado mantido aqui e somente em memoria de execucao.
 Ao reiniciar a aplicacao:
 - debounce zera
 - videos reproduzidos zeram
-- estado volta para idle
+- estado volta para warmup e depois idle
 
 Isso e coerente com o uso de apresentacao atual.
 

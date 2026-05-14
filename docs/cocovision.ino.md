@@ -37,8 +37,7 @@ Ele nao toma decisoes narrativas autonomas. A aplicacao Python continua sendo o 
 3. habilita/desabilita a fase de leitura continua de cor
 4. envia eventos textuais de saida:
    - `COCOVISION_DONE`
-   - `COCOVISION_COLOR=COLOR_*`
-   - `COLOR_*`
+   - `COLOR_BLUE`
 
 Em termos de arquitetura do sistema, ele e a ponta de atuacao e sensoriamento do `CocoVision`.
 
@@ -55,15 +54,11 @@ Este e o modulo Python mais diretamente acoplado ao firmware.
 
 e parseia as respostas:
 - `COCOVISION_DONE`
-- `COLOR_RED`
-- `COLOR_GREEN`
 - `COLOR_BLUE`
 
-Existe tambem uma compatibilidade importante:
-- o firmware envia `COCOVISION_COLOR=COLOR_*`
-- e em seguida envia tambem `COLOR_*`
-
-O lado Python sabe normalizar esse formato.
+O lado Python tambem sabe normalizar mensagens antigas no formato
+`COCOVISION_COLOR=COLOR_*`, mas o firmware atual da apresentacao publica apenas
+`COLOR_BLUE` como evento narrativo.
 
 ### `story_engine.py`
 
@@ -71,7 +66,7 @@ Nao fala diretamente com o ESP32, mas depende da semantica dos eventos produzido
 
 Exemplos:
 - `COCOVISION_DONE` libera o avancar do fluxo
-- `COLOR_*` dispara os videos de cor
+- `COLOR_BLUE` dispara o video de cor configurado
 
 ### `main.py`
 
@@ -579,6 +574,9 @@ Retorna:
 - `"COLOR_BLUE"`
 - ou string vazia quando nao ha confianca suficiente
 
+Observacao: esse retorno e a classificacao interna. A publicacao narrativa
+atual filtra esse resultado e so emite `COLOR_BLUE`.
+
 ## Publicacao de cor
 
 ### `publishColorIfNeeded(const String& colorName)`
@@ -599,23 +597,18 @@ Isso significa:
 - a mesma cor nao sera repetida continuamente dentro da janela
 - outra cor diferente pode ser enviada imediatamente
 
-#### Saida em dois formatos
+#### Saida atual
 
-```cpp
-emitLine(("COCOVISION_COLOR=" + colorName).c_str());
-emitLine(colorName.c_str());
+No fluxo atual, somente `COLOR_BLUE` e publicado para a narrativa. Vermelho e
+verde ainda podem ser classificados internamente, mas sao ignorados antes de
+gerar evento.
+
+```text
+COLOR_BLUE
 ```
 
-O firmware emite a mesma informacao em dois formatos:
-
-1. `COCOVISION_COLOR=COLOR_RED`
-2. `COLOR_RED`
-
-Interpretacao tecnica:
-- o primeiro formato e mais autoexplicativo para debug
-- o segundo e o formato mais simples para o parser narrativo
-
-O lado Python atualmente suporta ambos.
+O parser Python ainda aceita o formato antigo `COCOVISION_COLOR=COLOR_*`, mas
+esse nao e o formato publicado pelo firmware atual.
 
 #### Atualizacao do debounce
 
