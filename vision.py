@@ -462,7 +462,7 @@ class VisionSystem:
         )
         self._hands_double = hands_api.Hands(
             static_image_mode=False,
-            max_num_hands=2,
+            max_num_hands=4,
             min_detection_confidence=DETECTION_CONFIDENCE,
             min_tracking_confidence=TRACKING_CONFIDENCE,
         )
